@@ -23,19 +23,23 @@ EXPORT     = false # Export raw HTTP requests and responses, for debugging
 EXPORT_REQ = false
 EXPORT_DBG = false
 EXPORT_RES = false
-INTERCEPT  = true # Whether to intercept or forward userlevel requests
+INTERCEPT  = true  # Whether to intercept or forward userlevel requests
 TEST       = true  # Use test outte (at localhost)
+PAGING     = true  # Whether to allow scrolling in-game to change the page
 
-$port_npp      = 8124
-$port_outte    = 8125
+$port_npp      = 8124 # Port used to comunicate with the game
+$port_outte    = 8125 # Port used to comunicate with outte
 $target        = "https://dojo.nplusplus.ninja"
 $proxy         = "http://localhost:#{$port_npp}".ljust($target.length, "\x00")
 $outte         = TEST ? "127.0.0.1" : "45.32.150.168"
-$timeout_npp   = 0.25
-$timeout_outte = 5
-$socket        = nil
-$res           = nil
-$count         = 1
+$timeout_npp   = 0.25 # Time to wait for the game (local, so quick)
+$timeout_outte = 5    # Time to wait for outte (not local, so long)
+$socket        = nil  # Permanent socket with the game
+$last_req      = ""   # Last request string input by user
+$res           = nil  # Store outte's response, to forward to the game
+$count         = 1    # Proxied request counter
+$root_page     = 0    # Page that'll show at the top in-game
+$page          = 0    # Current page (different if we've scrolled down)
 
 def clear
   print "\r".ljust(80, ' ') + "\r"
@@ -111,11 +115,11 @@ def empty_query(pars)
   header  = Time.now.strftime("%Y-%m-%d-%H:%M") # Date of query  (16B)
   header += _pack(0,    4)                      # Map count      ( 4B)
   header += _pack(0,    4)                      # Query page     ( 4B)
-  header += _pack(0,    4)                      # ?              ( 4B)
+  header += _pack(0,    4)                      # Type           ( 4B)
   header += _pack(cat,  4)                      # Query category ( 4B)
   header += _pack(mode, 4)                      # Game mode      ( 4B)
-  header += _pack(5,    4)                      # ?              ( 4B)
-  header += _pack(500,  4)                      # ?              ( 4B)
+  header += _pack(5,    4)                      # Cache duration ( 4B)
+  header += _pack(500,  4)                      # Max page size  ( 4B)
   header += _pack(0,    4)                      # ?              ( 4B)
   header
 end
@@ -128,15 +132,22 @@ end
 def validate_res(res, pars)
   return empty_query(pars) if !res.is_a?(String)
   return empty_query(pars) if res.size < 48
-  return empty_query(pars) if _unpack(res[32..35]) != pars['mode'].to_i
-  cat = pars.key?('search') ? 36 : (pars['qt'].to_i || 10)
-  res[28..31] = _pack(cat, 4)
+  return empty_query(pars) if _unpack(res[24...28]) != 0
+  return empty_query(pars) if _unpack(res[32...36]) != pars['mode'].to_i
+  cat = pars.key?('search') ? 36 : (pars['qt'] || 10).to_i
+  page = (pars['page'] || 0).to_i
+  res[20...24] = _pack(page, 4)
+  res[28...32] = _pack(cat,  4)
   res
 end
 
 def intercept(req)
   return forward(req) if !INTERCEPT
   pars = parse_params(req.split("\n")[0].split[1])
+  if PAGING
+    $page = $root_page + pars['page'].to_i
+    call
+  end
   body = validate_res($res, pars)
   status = "HTTP/1.1 200 OK\r\n"
   headers = {
@@ -216,11 +227,12 @@ def shutdown
   exit
 end
 
-def call(req)
+def call(req = $last_req)
   Socket.tcp($outte, $port_outte) do |conn|
-    conn.write(req)
+    conn.write("page #{$page + 1} #{req}")
     conn.close_write
     $res = read(conn, false)
+    $last_req = req
     conn.close
     puts($res.nil? ? "Connection to outte timed out." : "Received #{$res.size} bytes from outte.")
   end
