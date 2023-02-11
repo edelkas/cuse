@@ -1,0 +1,22 @@
+TODO:
+
+Backend:
+- Extra filters: start date, end date, start ID, end ID, 0th owner, full/empty/X
+  leaderboard,...
+- Create cache system, storing userlevel files in a big binary / memory, using a
+  hash encoding all search query terms to determine if that query is cached or not.
+  Store date of cache blocks to allow for expiring of old blocks.
+- Make program check Github regularly for new versions, possibly even auto-update.
+
+Frontend:
+- Search tabs, so that multiple searches can be juggled (obviously, only one can
+  be active at any poiny).
+- Ability to save/load previous searches.
+
+Outte:
+- Create new field in UserlevelData table of outte's db to contain the Zlibbed block
+  and header, ready to be dumped in the final file, for efficiency.
+
+INVESTIGATE:
+- What happens when you switch userlevel tabs very quickly? (sockets closing, etc).
+- Look into N++'s userlevel cache, perhaps we can disable it.

@@ -2,17 +2,12 @@ require 'net/http'
 require 'socket'
 
 # TODO:
-# - Some queries are failing ("for hi", "for house")
-# - Figure out additional header fields
 # - Extra filters: start date, end date, 0th owner, etc.
 # - Create cache system, storing userlevel files in a big binary, using a hash
 #   encoding all search query terms to determine if that query is cached or not.
 # - Create new field in UserlevelData table of outte's db to contain the Zlibbed
 #   block and header, ready to be dumped in the final file, for efficiency.
 # - What happens when you switch userlevel tabs very quickly? (sockets closing, etc).
-# - Implement page browsing in-game (i.e., instead of having to reinject each page,
-#   we send chunks of 25, but when you get to the bottom, the game requests the next
-#   page, and we parse that.
 # - Look into the userlevel cache, perhaps we can disable it.
 # - Make program check Github regularly for new versions, possibly even auto-update
 # NOTES (for vid/tut):
@@ -24,6 +19,7 @@ EXPORT_REQ = false
 EXPORT_DBG = false
 EXPORT_RES = false
 INTERCEPT  = true  # Whether to intercept or forward userlevel requests
+ALL_TABS   = false # Intercept from all tabs (as opposed to only Search)
 TEST       = true  # Use test outte (at localhost)
 PAGING     = true  # Whether to allow scrolling in-game to change the page
 
@@ -32,10 +28,10 @@ $port_outte    = 8125 # Port used to comunicate with outte
 $target        = "https://dojo.nplusplus.ninja"
 $proxy         = "http://localhost:#{$port_npp}".ljust($target.length, "\x00")
 $outte         = TEST ? "127.0.0.1" : "45.32.150.168"
+$last_req      = "rzcglfrg" # Last request string input by user
 $timeout_npp   = 0.25 # Time to wait for the game (local, so quick)
 $timeout_outte = 5    # Time to wait for outte (not local, so long)
 $socket        = nil  # Permanent socket with the game
-$last_req      = ""   # Last request string input by user
 $res           = nil  # Store outte's response, to forward to the game
 $count         = 1    # Proxied request counter
 $root_page     = 0    # Page that'll show at the top in-game
@@ -204,7 +200,8 @@ def loop
   method, path, protocol = req.split
   req << read(client, true).to_s
   IO.binwrite("req_#{$count}", req) if EXPORT || EXPORT_REQ
-  if method == 'GET' && ['query_levels', 'levels'].include?(path.split('?')[0].split('/')[-1])
+  query = path.split('?')[0].split('/')[-1]
+  if method == 'GET' && (query == 'levels' || ALL_TABS && query == 'query_levels')
     res = intercept(req)
   else
     res = forward(req)
