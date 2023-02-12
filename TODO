@@ -12,6 +12,7 @@ Frontend:
 - Search tabs, so that multiple searches can be juggled (obviously, only one can
   be active at any poiny).
 - Ability to save/load previous searches.
+- As an alternative, have a CLI + Enter option to execute searches.
 
 Outte:
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
