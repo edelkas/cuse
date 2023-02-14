@@ -7,12 +7,21 @@ Backend:
   hash encoding all search query terms to determine if that query is cached or not.
   Store date of cache blocks to allow for expiring of old blocks.
 - Make program check Github regularly for new versions, possibly even auto-update.
+- Allow for regex searches.
+- Have config file: default date format, default filter values.
+- Validate text fields (numeric, dates, etc).
+- Pop up warnings for conflicting filters (e.g. author AND author ID simultaneously,
+  0th owner is and is not the same, etc).
+  Config option to disable them.
+- Multiple config profiles?
 
 Frontend:
 - Search tabs, so that multiple searches can be juggled (obviously, only one can
   be active at any poiny).
-- Ability to save/load previous searches.
+- Ability to save/load previous searches (probably a JSON file).
 - As an alternative, have a CLI + Enter option to execute searches.
+- Buttons next to filter fields: set as default, help
+- Checkbox to check/uncheck all filters (w/o changing their values).
 
 Outte:
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
