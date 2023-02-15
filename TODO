@@ -14,6 +14,7 @@ Backend:
   0th owner is and is not the same, etc).
   Config option to disable them.
 - Multiple config profiles?
+- Save latest state (tabs, searches...) when closing, and load them at the start.
 
 Frontend:
 - Search tabs, so that multiple searches can be juggled (obviously, only one can
@@ -22,6 +23,8 @@ Frontend:
 - As an alternative, have a CLI + Enter option to execute searches.
 - Buttons next to filter fields: set as default, help
 - Checkbox to check/uncheck all filters (w/o changing their values).
+- Button to close all search tabs.
+- Tooltips go to left if near to right border (or just force it to be inside somehow).
 
 Outte:
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
