@@ -9,20 +9,35 @@ $filters = {}
 
 # Search profiles
 class Search
-  attr_accessor :name, :filters, :hidden
-  @@searches = {}
-  @@list = nil
+  attr_accessor :name, :filters, :states, :hidden
+  @@searches = {}  # Hash of search profiles
+  @@list     = nil # TkListbox
+  @@entry    = nil # TkEntry
 
-  # Default searches
+  # Default and saved searches
   def self.init
-    @@searches['Current']       = Search.new('Current',       $config[:filters_default].dup, true, false)
-    @@searches['Sample search'] = Search.new('Sample search', $config[:filters_default].dup, false, false)
-    @@searches['Empty']         = Search.new('Empty',         $config[:filters_empty].dup,   true, false)
+    @@searches['Sample search'] = Search.new(
+      'Sample search',
+      $config[:filters_default].dup,
+      $config[:states_default].dup,
+      false,
+      false
+    )
+    @@searches['Empty'] = Search.new(
+      'Empty',
+      $config[:filters_empty].dup,
+      $config[:states_empty].dup,
+      true,
+      false
+    )
+    populate
   end
 
   def self.draw(frame)
-    @@list = TkListbox.new(frame, selectmode: 'single', width: 10, height: 6).grid(sticky: 'ew')
-    update
+    @@list  = TkListbox.new(frame, selectmode: 'browse', width: 10, height: 6).grid(sticky: 'ew')
+    @@entry = TkEntry.new(frame).grid(sticky: 'ew')
+    @@list.bind('<ListboxSelect>', ->{ update_entry; load })
+    update_list
   end
 
   # Parse config file for saved searches
@@ -44,46 +59,70 @@ class Search
     return "#{name} (#{index})"
   end
 
-  def self.load(name)
+  def self._load(name)
     return if !@@searches.key?(name)
-    @@searches['Current'].filters = @@searches[name].filters.dup
+    Filter.update(@@searches[name].filters, @@searches[name].states)
   end
 
-  def self.save(name)
-    name = find_name(name)
-    @@searches[name] = Search.new(name, @@searches['Current'].filters.dup, false, true)
-    update
+  def self.load
+    selection = @@list.curselection[0]
+    return if selection.nil?
+    name = @@list.get(selection)
+    return if name.nil?
+    _load(name)
+  end
+
+  # TODO: Dialog for confirmation in case of same name instead of return
+  def self.save
+    name = find_name(@@entry.value)
+    @@searches[name] = Search.new(name, Filter.filters, Filter.states, false, true)
+    update_list
   end
 
   def self.delete
     selection = @@list.curselection[0]
     return if selection.nil?
-    find(@@list.get(selection)).delete
+    name = @@list.get(selection)
+    return if !@@searches.key?(name)
+    @@searches[@@list.get(selection)].delete
   end
 
-  def self.update
+  def self.clear
+    _load('Empty')
+  end
+
+  def self.update_list
     @@list.value = @@searches.values.select{ |s| !s.hidden }.map(&:name)
+  end
+
+  def self.update_entry
+    selection = @@list.curselection[0]
+    return if selection.nil?
+    name = @@list.get(selection)
+    return if !@@searches.key?(name)
+    @@entry.value = name
+  end
+
+  def initialize(name, filters, states, hidden = false, deletable = true)
+    @name      = name
+    @filters   = filters
+    @states    = states
+    @hidden    = hidden
+    @deletable = deletable
+    @@searches[@name] = self
   end
 
   # TODO: Add confirmation dialog
   def delete
     return if !@deletable
     @@searches.delete(@name)
-    self.class.update
+    self.class.update_list
   end
 
-  def edit(new_name)
-    return if @@searches.key?(new_name)
-    @@searches[new_name] = @@searches.delete(@name)
-    self.class.update
-  end
-
-  def initialize(name, filters, hidden = false, deletable = true)
-    @name      = name
-    @filters   = filters
-    @hidden    = hidden
-    @deletable = deletable
-    @@searches[@name] = self
+  # Create copy of search (same filters and states)
+  def dup(name, hidden = false, deletable = true)
+    return if @@searches.key?(name)
+    @@searches[name] = Search.new(name, @filters.dup, @states.dup, hidden, deletable)
   end
 end
 
@@ -126,45 +165,52 @@ end
 class Filter
   @@filters = {}
 
-  def self.update(search)
-    return if Search.find(search).nil?
-    Search.find(search).filters.each{ |name, filter|
-      next if !@@filters.key?(name)
-      @@filters[name].update(false, filter)
+  def self.update(filters, states)
+    filters.each{ |name, value|
+      next if !@@filters.key?(name) || !states.key?(name)
+      @@filters[name].update(states[name], value)
     }
   end
 
-  def self.reset
-    @@filters.each{ |name, filter| filter.reset }
+  def self.list
+    @@filters
   end
 
-  def self.clear
-    @@filters.each{ |name, filter| filter.clear }
+  def self.filters
+    @@filters.map{ |name, f| [name, f.value] }.to_h
   end
 
-  def initialize(parent, name, value, active)
+  def self.states
+    @@filters.map{ |name, f| [name, f.state] }.to_h
+  end
+
+  def initialize(parent, name, value, state)
     @is_list = value.is_a?(Array)
+    @name  = name
 
-    # Factory values
-    @name   = name
-    @value  = value
-    @active = active
+    # Widget variables
+    @vName    = TkVariable.new(name)
+    @vText    = TkVariable.new(@is_list ? value[0] : value)
+    @vCheck   = TkVariable.new(state)
+    @vEntries = TkVariable.new(value) if @is_list
 
-    # Create variables
-    @vName    = TkVariable.new(@name)
-    @vText    = TkVariable.new(@is_list ? @value[0] : @value)
-    @vCheck   = TkVariable.new(@active)
-    @vEntries = TkVariable.new(@value) if @is_list
-
-    # Create widgets
+    # Widget objects
     @wName  = TkLabel.new(parent, textvariable: @vName)
     @wText  = (@is_list ? TkCombobox : TkEntry).new(parent, textvariable: @vText)
     @wText.values = value if @is_list
     @wCheck = TkCheckButton.new(parent, variable: @vCheck, command: ->{ update_state })
 
     # Initialize widget values to default
-    reset
+    update(Search.find('Sample search').states[@name], Search.find('Sample search').filters[@name])
     @@filters[@name] = self
+  end
+
+  def value
+    @vText.string
+  end
+
+  def state
+    @vCheck.bool
   end
 
   def update_state
@@ -173,16 +219,8 @@ class Filter
 
   def update(state, text)
     @vCheck.bool  = state
-    @vText.string = @is_list ? text[0] : text
+    @vText.string = text.is_a?(Array) ? text[0] : text
     update_state
-  end
-
-  def reset
-    update(@active, Search.find('Sample search').filters[@name])
-  end
-
-  def clear
-    update(false, Search.find('Empty').filters[@name])
   end
 
   def toggle(state = nil)
@@ -237,6 +275,34 @@ def load_config(name = nil)
       '0th by'     => 'Slomac',
       '0th not by' => 'Slomac',
       'Scores'     => '20'
+    },
+    states_empty: {
+      'Title'      => false,
+      'Author'     => false,
+      'Author ID'  => false,
+      'Mode'       => false,
+      'Tab'        => false,
+      'Before'     => false,
+      'After'      => false,
+      'Min ID'     => false,
+      'Max ID'     => false,
+      '0th by'     => false,
+      '0th not by' => false,
+      'Scores'     => false
+    },
+    states_default: {
+      'Title'      => true,
+      'Author'     => false,
+      'Author ID'  => false,
+      'Mode'       => false,
+      'Tab'        => false,
+      'Before'     => false,
+      'After'      => false,
+      'Min ID'     => false,
+      'Max ID'     => false,
+      '0th by'     => false,
+      '0th not by' => false,
+      'Scores'     => false
     }
   }  
 end
@@ -267,33 +333,35 @@ $root.minsize(190, 640)
 $root.geometry('190x640')
 $root.grid_columnconfigure(0, weight: 1)
 
-# Frames
-fFilters = TkFrame.new($root).grid(row: 0, column: 0, sticky: 'new')
-fButtons = TkFrame.new($root).grid(sticky: 'w')
-
 # Initialize config and others (don't move up)
 init
 
 # Filters
+fFilters = TkFrame.new($root).grid(row: 0, column: 0, sticky: 'new')
 fFilters.grid_columnconfigure(2, weight: 1)
-Search.find('Sample search').filters.map{ |name, value|
-  $filters[name] = Filter.new(fFilters, name, value, name == 'Title' ? true : false)
+sample = Search.find('Sample search')
+sample.filters.map{ |name, value|
+  $filters[name] = Filter.new(fFilters, name, value, sample.states[name])
 }
 $filters.values.each_with_index{ |f, i| f.grid(i, 0) }
 
 # Search
-vSearch = TkVariable.new('')
-wSearch = TkEntry.new($root, textvariable: vSearch)
-Button.new(fButtons, 'icons/new.gif',    0, 0, 'New',    ->{ Filter.clear })
-Button.new(fButtons, 'icons/load.gif',   0, 1, 'Load',   ->{})
-Button.new(fButtons, 'icons/edit.gif',   0, 2, 'Edit',   ->{})
-Button.new(fButtons, 'icons/save.gif',   0, 3, 'Save',   ->{ Search.save(vSearch.to_s) })
-Button.new(fButtons, 'icons/delete.gif', 0, 4, 'Delete', ->{ Search.delete })
-wSearch.grid(sticky: 'ew')
-Search.draw($root)
+fButtons = TkFrame.new($root).grid(row: 1, column: 0, sticky: 'w')
+Button.new(fButtons, 'icons/new.gif',    0, 0, 'New',    ->{ Search.clear })
+Button.new(fButtons, 'icons/save.gif',   0, 1, 'Save',   ->{ Search.save })
+Button.new(fButtons, 'icons/delete.gif', 0, 2, 'Delete', ->{ Search.delete })
+Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ })
+Button.new(fButtons, 'icons/npp.gif',    0, 4, 'Play',   ->{ })
+fSearch = TkFrame.new($root).grid(row: 2, column: 0, sticky: 'new')
+fSearch.grid_columnconfigure(0, weight: 1)
+Search.draw(fSearch)
 
-# Buttons
-bSearch = TkButton.new($root, text: 'Search').grid(sticky: 'ew')
+# Navigation
+fButtons2 = TkFrame.new($root).grid(row: 3, column: 0, sticky: 'w')
+Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
+Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
+Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { })
+Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
 
 # Start program
 Tk.mainloop

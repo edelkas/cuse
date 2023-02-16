@@ -24,7 +24,9 @@ Frontend:
 - Buttons next to filter fields: set as default, help
 - Checkbox to check/uncheck all filters (w/o changing their values).
 - Button to close all search tabs.
-- Tooltips go to left if near to right border (or just force it to be inside somehow).
+- Make tooltips go to left if near the right border (or just force it to be
+  inside somehow, for instance, draw it to the right in the left half,
+  and to the left in the right half, and similarly vertically).
 
 Outte:
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
