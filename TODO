@@ -15,6 +15,8 @@ Backend:
 - Save latest state (tabs, searches...) when closing, and load them at the start.
 
 Frontend:
+- N++ button should perhaps be a double state one (active/deactivate proxying),
+  have two versions of the icon for this (red/green?)
 - Add tabs to the userlevel result table, so that multiple searches and result sets
   can be maintained simultaneously. Keep everything (filters, userlevels, paging...)
   in memory. Also, move page navigation to this part, and add button to add/remove

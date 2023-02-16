@@ -34,8 +34,8 @@ class Search
   end
 
   def self.draw(frame)
-    @@list  = TkListbox.new(frame, selectmode: 'browse', width: 10, height: 6).grid(sticky: 'ew')
     @@entry = TkEntry.new(frame).grid(sticky: 'ew')
+    @@list  = TkListbox.new(frame, selectmode: 'browse', width: 10, height: 6).grid(sticky: 'ew')
     @@list.bind('<ListboxSelect>', ->{ update_entry; load })
     update_list
   end
