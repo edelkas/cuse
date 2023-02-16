@@ -1,27 +1,26 @@
 TODO:
 
 Backend:
-- Extra filters: start date, end date, start ID, end ID, 0th owner, full/empty/X
-  leaderboard,...
 - Create cache system, storing userlevel files in a big binary / memory, using a
   hash encoding all search query terms to determine if that query is cached or not.
   Store date of cache blocks to allow for expiring of old blocks.
 - Make program check Github regularly for new versions, possibly even auto-update.
 - Allow for regex searches.
 - Have config file: default date format, default filter values.
-- Validate text fields (numeric, dates, etc).
+- Validate text fields (numeric, dates, etc). Disable incompatible filters when
+  enabling one filter (e.g. disable author ID when enabling author and viceversa)
 - Pop up warnings for conflicting filters (e.g. author AND author ID simultaneously,
-  0th owner is and is not the same, etc).
-  Config option to disable them.
+  0th owner is and is not the same, etc). Config option to disable them.
 - Multiple config profiles?
 - Save latest state (tabs, searches...) when closing, and load them at the start.
 
 Frontend:
-- Search tabs, so that multiple searches can be juggled (obviously, only one can
-  be active at any poiny).
-- Ability to save/load previous searches (probably a JSON file).
+- Add tabs to the userlevel result table, so that multiple searches and result sets
+  can be maintained simultaneously. Keep everything (filters, userlevels, paging...)
+  in memory. Also, move page navigation to this part, and add button to add/remove
+  tabs.
 - As an alternative, have a CLI + Enter option to execute searches.
-- Buttons next to filter fields: set as default, help
+- Help tooltips for filters and others
 - Checkbox to check/uncheck all filters (w/o changing their values).
 - Button to close all search tabs.
 - Make tooltips go to left if near the right border (or just force it to be
@@ -29,6 +28,10 @@ Frontend:
   and to the left in the right half, and similarly vertically).
 
 Outte:
+- Implement extra userlevel queries (date ranges, ID ranges, highscore count),
+  perhaps by adding new fields to Userlevel table for quickness.
+- Look into caching searches (before cropping the full list), so that page browsing
+  (which makes a new query to outte) is quick. Look into expiring 
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
   and header, ready to be dumped in the final file, for efficiency.
 
