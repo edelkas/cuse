@@ -1,8 +1,11 @@
 require 'tk'
+require 'date'
 #require 'tkextlib/tkimg'
+#require 'tkextlib/iwidgets'
 require 'byebug'
 
-INITIAL_DATE = Time.new(2015, 6, 2)
+INITIAL_DATE = Date.new(2015, 6, 2)
+DATE_FORMAT = "%d/%m/%Y"
 
 $config = {}
 $filters = {}
@@ -11,8 +14,11 @@ $filters = {}
 class Search
   attr_accessor :name, :filters, :states, :hidden
   @@searches = {}  # Hash of search profiles
-  @@list     = nil # TkListbox
   @@entry    = nil # TkEntry
+  @@list     = nil # TkListbox
+  @@scroll   = nil # TkScrollbar
+  @@frame    = nil # TkFrame to hold the widgets
+  @@length   = 6   # Onscreen list length
 
   # Default and saved searches
   def self.init
@@ -33,10 +39,15 @@ class Search
     populate
   end
 
-  def self.draw(frame)
-    @@entry = TkEntry.new(frame).grid(sticky: 'ew')
-    @@list  = TkListbox.new(frame, selectmode: 'browse', width: 10, height: 6).grid(sticky: 'ew')
+  def self.draw(frame, row, col)
+    @@frame = TkFrame.new(frame).grid(row: row, column: col, sticky: 'new')
+    @@frame.grid_columnconfigure(0, weight: 1)
+    @@entry = TkEntry.new(@@frame).grid(row: 0, column: 0, columnspan: 2, sticky: 'ew')
+    @@scroll = TkScrollbar.new(@@frame, orient: 'vertical')
+    @@list  = TkListbox.new(@@frame, selectmode: 'browse', width: 10, height: @@length).grid(row: 1, column: 0, sticky: 'ew')
     @@list.bind('<ListboxSelect>', ->{ update_entry; load })
+    @@list.yscrollcommand = -> (*args) { @@scroll.set(*args) }
+    @@scroll.command = -> (*args) { @@list.yview(*args) }
     update_list
   end
 
@@ -50,9 +61,8 @@ class Search
 
   # Correct name by adding index in case of repetitions
   def self.find_name(name)
-    name.strip!
-    name = 'Unnamed' if name.empty?
-    name.gsub!(/\(\d+\)$/, '')
+    name = 'Unnamed' if name.strip.empty?
+    name = name.gsub(/\(\d+\)$/, '').strip
     matches = @@searches.keys.select{ |n| n == name || n =~ /^#{name} \(\d+\)$/ } 
     return name if matches.empty?
     index = [(matches.map{ |n| n[/\((\d+)\)$/, 1].to_i }.max || 1) + 1, 2].max
@@ -93,6 +103,7 @@ class Search
 
   def self.update_list
     @@list.value = @@searches.values.select{ |s| !s.hidden }.map(&:name)
+    @@list.size <= @@length ? @@scroll.ungrid : @@scroll.grid(row: 1, column: 1, sticky: 'ns')
   end
 
   def self.update_entry
@@ -101,6 +112,10 @@ class Search
     name = @@list.get(selection)
     return if !@@searches.key?(name)
     @@entry.value = name
+  end
+
+  def self.execute
+    
   end
 
   def initialize(name, filters, states, hidden = false, deletable = true)
@@ -144,7 +159,7 @@ class Tooltip
     x = @widget.winfo_pointerx - $root.winfo_rootx + 10
     y = @widget.winfo_pointery - $root.winfo_rooty + 10
     @label = TkLabel.new($root, text: @text, justify: 'left', background: "#ffffff", relief: 'solid', borderwidth: 1, wraplength: @wraplength)
-    @label.place(x: x, y: y) # Absolute coordinates with respect to the root window
+    @label.place(in: @widget, x: 0, y: @widget.winfo_height) # Absolute coordinates with respect to the root window
   end
 
   def leave
@@ -172,6 +187,10 @@ class Filter
     }
   end
 
+  def self.validate
+    @@filters.each{ |name, f| f.validate(true) }
+  end
+
   def self.list
     @@filters
   end
@@ -185,24 +204,97 @@ class Filter
   end
 
   def initialize(parent, name, value, state)
-    @is_list = value.is_a?(Array)
-    @name  = name
+    # Internal variables
+    @name     = name
+    @old_val  = value
+    @klass    = nil
+    @limit    = nil
+    @type     = nil
+    @readonly = false
+    @entries  = []
+
+    # Figure out value of variables based on widget name
+    if ['Mode', 'Tab'].include?(name)
+      @klass = 'combo'
+      @limit = 10
+      case name
+      when 'Mode'
+        @entries = ['Solo', 'Coop', 'Race']
+      when 'Tab'
+        @entries = ['Best', 'Featured', 'Top Weekly', 'Hardest']
+      end
+      @old_val = @entries.include?(value) ? value : @entries[0]
+    elsif ['Scores'].include?(name)
+      @readonly = true
+      @klass = 'spin'
+      @limit = 2
+    else
+      @klass = 'entry'
+      if ['Author ID', 'Min ID', 'Max ID'].include?(name)
+        @type = 'int'
+        @limit = 7
+      elsif ['Before', 'After'].include?(name)
+        @type = 'date'
+        @limit = 10
+      else
+        @type = 'string'
+      end
+    end
 
     # Widget variables
-    @vName    = TkVariable.new(name)
-    @vText    = TkVariable.new(@is_list ? value[0] : value)
-    @vCheck   = TkVariable.new(state)
-    @vEntries = TkVariable.new(value) if @is_list
+    @vName  = TkVariable.new(name)
+    @vText  = TkVariable.new(value)
+    @vCheck = TkVariable.new(state)
+    @vText.trace('w', proc { validate })
 
     # Widget objects
+    case @klass
+    when 'entry'
+      @wText = TkEntry.new(parent, textvariable: @vText, bg: 'white')
+    when 'combo'
+      @wText = TkCombobox.new(parent, textvariable: @vText, values: @entries)
+    when 'spin'
+      @wText = TkSpinbox.new(parent, textvariable: @vText, from: 0, to: 20, state: 'readonly', repeatdelay: 100, repeatinterval: 25, readonlybackground: 'white')
+    end
+    Tooltip.new(@wText, 'DD/MM/YYYY') if @type == 'date'
+    @wText.bind('FocusOut'){ validate(true) }
     @wName  = TkLabel.new(parent, textvariable: @vName)
-    @wText  = (@is_list ? TkCombobox : TkEntry).new(parent, textvariable: @vText)
-    @wText.values = value if @is_list
     @wCheck = TkCheckButton.new(parent, variable: @vCheck, command: ->{ update_state })
 
     # Initialize widget values to default
     update(Search.find('Sample search').states[@name], Search.find('Sample search').filters[@name])
     @@filters[@name] = self
+  end
+
+  # Validate filter content based on class and type
+  # A final validation only happens when the text is supposed to be complete,
+  # i.e., not in the middle of a change
+  # TODO: Also check that AFTER date <= BEFORE date (and force it otherwise)
+  # TODO: Add warnings for some validation fails (e.g. wrong date formats)
+  def validate(final = false)
+    new_val = @vText.string[0...@limit]
+    if @klass == 'combo'
+      @entries.include?(new_val) ? @old_val = new_val : new_val = @old_val
+    else
+      case @type
+      when 'int'
+        new_val = new_val[/\d+/]
+      when 'date'
+        new_val = new_val.gsub(/[^0-9\/]/, '')
+        if final
+          date1 = INITIAL_DATE
+          date2 = Date.today
+          date = (Date.strptime(new_val, DATE_FORMAT) rescue nil)
+          if !date.nil?
+            date = date.clamp(date1, date2)
+          else
+            date = @name == 'After' ? date1 : date2
+          end
+          new_val = format_date(date)
+        end
+      end
+    end
+    update_text(new_val[0...@limit])
   end
 
   def value
@@ -213,14 +305,18 @@ class Filter
     @vCheck.bool
   end
 
-  def update_state
-    @wText.state = @vCheck == true ? "normal" : "disabled"
+  def update_state(state = nil)
+    @vCheck.bool = state if [true, false].include?(state)
+    @wText.state = @vCheck == false ? 'disabled' : (@readonly ? 'readonly' : 'normal')
+  end
+
+  def update_text(text)
+    @vText.string = text
   end
 
   def update(state, text)
-    @vCheck.bool  = state
-    @vText.string = text.is_a?(Array) ? text[0] : text
-    update_state
+    update_state(state)
+    update_text(text)
   end
 
   def toggle(state = nil)
@@ -239,7 +335,7 @@ end
 
 # Aux functions
 def format_date(date)
-  date.strftime("%d/%m/%Y")
+  date.strftime(DATE_FORMAT)
 end
 
 # Load and save config
@@ -252,8 +348,8 @@ def load_config(name = nil)
       'Title'      => '',
       'Author'     => '',
       'Author ID'  => '',
-      'Mode'       => ['Solo', 'Coop', 'Race'],
-      'Tab'        => ['Best', 'Featured', 'Top Weekly', 'Hardest'],
+      'Mode'       => 'Solo',
+      'Tab'        => 'Best',
       'Before'     => '',
       'After'      => '',
       'Min ID'     => '',
@@ -266,12 +362,12 @@ def load_config(name = nil)
       'Title'      => 'Untitled',
       'Author'     => 'Melancholy',
       'Author ID'  => '117031',
-      'Mode'       => ['Solo', 'Coop', 'Race'],
-      'Tab'        => ['Best', 'Featured', 'Top Weekly', 'Hardest'],
+      'Mode'       => 'Solo',
+      'Tab'        => 'Featured',
       'Before'     => format_date(Time.now),
       'After'      => format_date(INITIAL_DATE),
-      'Min ID'     => '100000',
-      'Max ID'     => '22715',
+      'Min ID'     => '22715',
+      'Max ID'     => '110000',
       '0th by'     => 'Slomac',
       '0th not by' => 'Slomac',
       'Scores'     => '20'
@@ -327,11 +423,26 @@ def err(text)
   Tk.messageBox(type: 'ok', icon: 'error', title: 'Error', message: text)
 end
 
+# Switch focus to root if we click outside of a widget
+# This is important because we use it to validate the fields automatically
+# when clicking outside of them.
+def defocus(event)
+  focused = Tk.focus
+  return nil if focused == $root
+  x1 = focused.winfo_rootx
+  x2 = focused.winfo_rootx + focused.winfo_width
+  y1 = focused.winfo_rooty
+  y2 = focused.winfo_rooty + focused.winfo_height
+  $root.focus if event.x_root < x1 || event.x_root > x2 || event.y_root < y1 || event.y_root > y2
+end
+
 # Root window
 $root = TkRoot.new(title: "N++ Custom Userlevel Search Engine")
 $root.minsize(190, 640)
 $root.geometry('190x640')
 $root.grid_columnconfigure(0, weight: 1)
+$root.resizable(false, false)
+$root.bind('ButtonPress'){ |event| defocus(event) }
 
 # Initialize config and others (don't move up)
 init
@@ -352,9 +463,7 @@ Button.new(fButtons, 'icons/save.gif',   0, 1, 'Save',   ->{ Search.save })
 Button.new(fButtons, 'icons/delete.gif', 0, 2, 'Delete', ->{ Search.delete })
 Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ })
 Button.new(fButtons, 'icons/npp.gif',    0, 4, 'Play',   ->{ })
-fSearch = TkFrame.new($root).grid(row: 2, column: 0, sticky: 'new')
-fSearch.grid_columnconfigure(0, weight: 1)
-Search.draw(fSearch)
+Search.draw($root, 2, 0)
 
 # Navigation
 fButtons2 = TkFrame.new($root).grid(row: 3, column: 0, sticky: 'w')
@@ -362,6 +471,7 @@ Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
 Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
 Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { })
 Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
+
 
 # Start program
 Tk.mainloop

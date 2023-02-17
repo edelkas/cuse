@@ -28,6 +28,9 @@ Frontend:
 - Make tooltips go to left if near the right border (or just force it to be
   inside somehow, for instance, draw it to the right in the left half,
   and to the left in the right half, and similarly vertically).
+- Add log window at the bottom, with scrollbar, to show warning, errors, info...
+- RadioButton to toggle between in-game or in-program pagination, since both
+  don't work together properly.
 
 Outte:
 - Implement extra userlevel queries (date ranges, ID ranges, highscore count),
