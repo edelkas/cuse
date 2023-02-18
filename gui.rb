@@ -4,12 +4,99 @@ require 'date'
 #require 'tkextlib/iwidgets'
 require 'byebug'
 
-DEFAULT_SEARCH = "Unnamed search"
-INITIAL_DATE = Date.new(2015, 6, 2)
-DATE_FORMAT = "%d/%m/%Y"
+DEFAULT_SEARCH  = "Unnamed search"
+INITIAL_DATE    = Date.new(2015, 6, 2)
+DATE_FORMAT     = "%d/%m/%Y"
+TIME_FORMAT_IN  = "%Y-%m-%d-%H:%M"
+TIME_FORMAT_OUT = "%d/%m/%Y %H:%M"
 
-$config = {}
+$config  = {}
 $filters = {}
+
+# Aux functions
+def _pack(n, size)
+  n.to_s(16).rjust(2 * size, "0").scan(/../).reverse.map{ |b|
+    [b].pack('H*')[0]
+  }.join.force_encoding("ascii-8bit")
+end
+
+def _unpack(bytes, fmt = nil)
+  if bytes.is_a?(Array) then bytes = bytes.join end
+  if !bytes.is_a?(String) then bytes.to_s end
+  i = bytes.unpack(fmt)[0] if !fmt.nil?
+  i ||= bytes.unpack('H*')[0].scan(/../).reverse.join.to_i(16)
+rescue
+  bytes.unpack('H*')[0].scan(/../).reverse.join.to_i(16)
+end
+
+def to_utf8(str)
+  str.bytes.reject{ |b| b < 32 || b == 127 }.join.scrub('_')
+end
+
+def parse_date(str)
+  Date.strptime(str, DATE_FORMAT) rescue nil
+end
+
+def format_date(date)
+  date.strftime(DATE_FORMAT)
+end
+
+def parse_time(str)
+  DateTime.strptime(str, TIME_FORMAT_IN) rescue nil
+end
+
+def format_time(time)
+  time.strftime(TIME_FORMAT_OUT)
+end
+
+# TODO: Use the log widget rather than these modal windows.
+#       Alternatively, customize these (smaller font, not bold, etc.).
+def info(text)
+  Tk.messageBox(type: 'ok', icon: 'info', title: 'Info', message: text)
+end
+
+def warn(text)
+  Tk.messageBox(type: 'ok', icon: 'warning', title: 'Warning', message: text)
+end
+
+def err(text)
+  Tk.messageBox(type: 'ok', icon: 'error', title: 'Error', message: text)
+end
+
+class Tooltip
+  def initialize(widget, text = " ? ")
+    @wait       = 2000 # not in use, 'after' didnt work
+    @wraplength = 180
+    @widget     = widget
+    @text       = text
+    @label      = nil
+    @schedule   = nil # not in use, 'after' didnt work
+    @widget.bind('Enter'){ enter }
+    @widget.bind('Leave'){ leave }
+  end
+
+  def enter
+    # Absolute coordinates of pointer with respect to screen minus the same for the root window
+    # equals absolute coordinates of pointer with respect to the root window
+    x = @widget.winfo_pointerx - $root.winfo_rootx + 10
+    y = @widget.winfo_pointery - $root.winfo_rooty + 10
+    @label = TkLabel.new($root, text: @text, justify: 'left', background: "#ffffff", relief: 'solid', borderwidth: 1, wraplength: @wraplength)
+    @label.place(in: @widget, x: 0, y: @widget.winfo_height) # Absolute coordinates with respect to the root window
+  end
+
+  def leave
+    @label.place_forget
+    @label = nil
+  end
+end # End Tooltip
+
+class Button < TkButton
+  def initialize(frame, image, row, column, tooltip, command, padx = 0, pady = 0)
+    super(frame, image: TkPhotoImage.new(file: image), command: command)
+    self.grid(row: row, column: column, sticky: 'nsew', padx: padx, pady: pady)
+    if !tooltip.nil? && !tooltip.empty? then Tooltip.new(self, tooltip) end
+  end
+end # End Button
 
 # Search profiles
 class Search
@@ -141,42 +228,7 @@ class Search
     return if @@searches.key?(name)
     @@searches[name] = Search.new(name, @filters.dup, @states.dup, hidden, deletable)
   end
-end
-
-class Tooltip
-  def initialize(widget, text = " ? ")
-    @wait       = 2000 # not in use, 'after' didnt work
-    @wraplength = 180
-    @widget     = widget
-    @text       = text
-    @label      = nil
-    @schedule   = nil # not in use, 'after' didnt work
-    @widget.bind('Enter'){ enter }
-    @widget.bind('Leave'){ leave }
-  end
-
-  def enter
-    # Absolute coordinates of pointer with respect to screen minus the same for the root window
-    # equals absolute coordinates of pointer with respect to the root window
-    x = @widget.winfo_pointerx - $root.winfo_rootx + 10
-    y = @widget.winfo_pointery - $root.winfo_rooty + 10
-    @label = TkLabel.new($root, text: @text, justify: 'left', background: "#ffffff", relief: 'solid', borderwidth: 1, wraplength: @wraplength)
-    @label.place(in: @widget, x: 0, y: @widget.winfo_height) # Absolute coordinates with respect to the root window
-  end
-
-  def leave
-    @label.place_forget
-    @label = nil
-  end
-end
-
-class Button < TkButton
-  def initialize(frame, image, row, column, tooltip, command, padx = 0, pady = 0)
-    super(frame, image: TkPhotoImage.new(file: image), command: command)
-    self.grid(row: row, column: column, sticky: 'nsew', padx: padx, pady: pady)
-    if !tooltip.nil? && !tooltip.empty? then Tooltip.new(self, tooltip) end
-  end
-end
+end # End Search
 
 # Custom class to hold a search filter
 class Filter
@@ -378,17 +430,38 @@ class Filter
   end
   #def pack(**args)  @wFrame.pack(args)  end
   #def place(**args) @wFrame.place(args) end
-end
+end # End Filter
 
-# Aux functions
-def parse_date(str)
-  Date.strptime(str, DATE_FORMAT)
-rescue
-  nil
-end
+class LevelSet
+  def initialize(raw)
+    parse(raw)
+  end
 
-def format_date(date)
-  date.strftime(DATE_FORMAT)
+  def parse(raw)
+    # Parse header
+    @header = {
+      date:    parse_time(raw[0...16]),
+      count:   _unpack(raw[16...20]),
+      page:    _unpack(raw[20...24]),
+      type:    _unpack(raw[24...28]),
+      qt:      _unpack(raw[28...32]),
+      mode:    _unpack(raw[32...36]),
+      cache:   _unpack(raw[36...40]),
+      max:     _unpack(raw[40...44]),
+      unknown: _unpack(raw[44...48])
+    }
+
+    # Parse map headers
+    @levels = raw[48 ... 48 + 44 * @header[:count]].bytes.each_slice(44).map { |h|
+      {
+        id:        _unpack(h[0...4], 'l<'),
+        author_id: _unpack(h[0...8], 'l<'),
+        author:    to_utf8(h[8...24].split("\x00")[0]).strip,
+        favs:      _unpack(h[24...28], 'l<'),
+        date:      parse_time(h[28..-1])
+      }
+    }
+  end
 end
 
 # Load and save config
@@ -462,20 +535,6 @@ end
 def init
   load_config
   Search.init
-end
-
-# TODO: Use the log widget rather than these modal windows.
-#       Alternatively, customize these (smaller font, not bold, etc.).
-def info(text)
-  Tk.messageBox(type: 'ok', icon: 'info', title: 'Info', message: text)
-end
-
-def warn(text)
-  Tk.messageBox(type: 'ok', icon: 'warning', title: 'Warning', message: text)
-end
-
-def err(text)
-  Tk.messageBox(type: 'ok', icon: 'error', title: 'Error', message: text)
 end
 
 # Switch focus to root if we click outside of a widget
