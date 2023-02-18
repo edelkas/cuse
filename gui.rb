@@ -4,6 +4,7 @@ require 'date'
 #require 'tkextlib/iwidgets'
 require 'byebug'
 
+DEFAULT_SEARCH = "Unnamed search"
 INITIAL_DATE = Date.new(2015, 6, 2)
 DATE_FORMAT = "%d/%m/%Y"
 
@@ -61,7 +62,7 @@ class Search
 
   # Correct name by adding index in case of repetitions
   def self.find_name(name)
-    name = 'Unnamed' if name.strip.empty?
+    name = DEFAULT_SEARCH if name.strip.empty?
     name = name.gsub(/\(\d+\)$/, '').strip
     matches = @@searches.keys.select{ |n| n == name || n =~ /^#{name} \(\d+\)$/ } 
     return name if matches.empty?
@@ -72,6 +73,7 @@ class Search
   def self._load(name)
     return if !@@searches.key?(name)
     Filter.update(@@searches[name].filters, @@searches[name].states)
+    Filter.validate
   end
 
   def self.load
@@ -82,9 +84,9 @@ class Search
     _load(name)
   end
 
-  # TODO: Dialog for confirmation in case of same name instead of return
   def self.save
     name = find_name(@@entry.value)
+    Filter.validate
     @@searches[name] = Search.new(name, Filter.filters, Filter.states, false, true)
     update_list
   end
@@ -115,7 +117,7 @@ class Search
   end
 
   def self.execute
-    
+    Filter.validate
   end
 
   def initialize(name, filters, states, hidden = false, deletable = true)
@@ -179,6 +181,8 @@ end
 # Custom class to hold a search filter
 class Filter
   @@filters = {}
+  @@incompat = [ ['Author', 'Author ID'] ] # Lists of incompatible filters
+  @@warnings = []
 
   def self.update(filters, states)
     filters.each{ |name, value|
@@ -187,8 +191,41 @@ class Filter
     }
   end
 
-  def self.validate
+  def self.validate(warn = false)
+    # Validate all filters individually
     @@filters.each{ |name, f| f.validate(true) }
+
+    # Make sure there are no incompatible filters enabled
+    @@incompat.each{ |list|
+      list.select{ |name|
+        @@filters.key?(name) && @@filters[name].state == true
+      }[1..-1].to_a.each{ |name|
+        @@filters[name].update_state(false)
+      }
+    }
+
+    # Date check
+    date1 = parse_date(@@filters['After'].value)
+    date2 = parse_date(@@filters['Before'].value)
+    if !date1.nil? && !date2.nil? && date1 > date2
+      @@filters['After'].update_text(format_date(date2))
+      @@filters['Before'].update_text(format_date(date1))
+      @@warnings.push("'After' date was greater than 'Before' date -> Swapped") if warn
+    end
+
+    # Map ID check
+    id1 = @@filters['Min ID'].value
+    id2 = @@filters['Max ID'].value
+    if id1.to_i > id2.to_i
+      @@filters['Min ID'].update_text(id2)
+      @@filters['Max ID'].update_text(id1)
+      @@warnings.push("'Min ID' was greater than 'Max ID' -> Swapped") if warn
+    end
+
+    if warn
+      warn("Some filters were fixed:\n#{@@warnings.join("\n")}")
+      @@warnings = []
+    end
   end
 
   def self.list
@@ -238,6 +275,7 @@ class Filter
         @limit = 10
       else
         @type = 'string'
+        @limit = name == 'Author' ? 16 : 127
       end
     end
 
@@ -266,25 +304,25 @@ class Filter
     @@filters[@name] = self
   end
 
-  # Validate filter content based on class and type
-  # A final validation only happens when the text is supposed to be complete,
-  # i.e., not in the middle of a change
-  # TODO: Also check that AFTER date <= BEFORE date (and force it otherwise)
+  # Validate filter content based on class and type:
+  #   Normal validation: More basic, executed on each modification.
+  #   Final validation: More complex, executed when focus is changed.
   # TODO: Add warnings for some validation fails (e.g. wrong date formats)
   def validate(final = false)
-    new_val = @vText.string[0...@limit]
+    new_val = value[0...@limit]
+    return update_state(false) if final && new_val.strip.empty?
     if @klass == 'combo'
       @entries.include?(new_val) ? @old_val = new_val : new_val = @old_val
     else
       case @type
       when 'int'
-        new_val = new_val[/\d+/]
+        new_val = new_val[/\d+/].to_s
       when 'date'
         new_val = new_val.gsub(/[^0-9\/]/, '')
         if final
           date1 = INITIAL_DATE
           date2 = Date.today
-          date = (Date.strptime(new_val, DATE_FORMAT) rescue nil)
+          date = parse_date(new_val)
           if !date.nil?
             date = date.clamp(date1, date2)
           else
@@ -294,7 +332,8 @@ class Filter
         end
       end
     end
-    update_text(new_val[0...@limit])
+    new_val = new_val[0...@limit]
+    update_text(new_val) unless new_val == value
   end
 
   def value
@@ -308,6 +347,14 @@ class Filter
   def update_state(state = nil)
     @vCheck.bool = state if [true, false].include?(state)
     @wText.state = @vCheck == false ? 'disabled' : (@readonly ? 'readonly' : 'normal')
+    return if @vCheck == false
+    @@incompat.each{ |list|
+      next if !list.include?(@name)
+      list.each{ |name|
+        next if name == @name || !@@filters.key?(name)
+        @@filters[name].update_state(false)
+      }
+    }
   end
 
   def update_text(text)
@@ -324,16 +371,22 @@ class Filter
   end
 
   # Recover TK geometry methods
-  #def pack(**args)  @wFrame.pack(args)  end
   def grid(row, col)
     @wCheck.grid(row: row, column: col,     sticky: 'ew')
     @wName.grid(row: row,  column: col + 1, sticky: 'w')
     @wText.grid(row: row,  column: col + 2, sticky: 'ew')
   end
+  #def pack(**args)  @wFrame.pack(args)  end
   #def place(**args) @wFrame.place(args) end
 end
 
 # Aux functions
+def parse_date(str)
+  Date.strptime(str, DATE_FORMAT)
+rescue
+  nil
+end
+
 def format_date(date)
   date.strftime(DATE_FORMAT)
 end
@@ -350,8 +403,8 @@ def load_config(name = nil)
       'Author ID'  => '',
       'Mode'       => 'Solo',
       'Tab'        => 'Best',
-      'Before'     => '',
       'After'      => '',
+      'Before'     => '',
       'Min ID'     => '',
       'Max ID'     => '',
       '0th by'     => '',
@@ -364,8 +417,8 @@ def load_config(name = nil)
       'Author ID'  => '117031',
       'Mode'       => 'Solo',
       'Tab'        => 'Featured',
-      'Before'     => format_date(Time.now),
       'After'      => format_date(INITIAL_DATE),
+      'Before'     => format_date(Time.now),
       'Min ID'     => '22715',
       'Max ID'     => '110000',
       '0th by'     => 'Slomac',
@@ -378,8 +431,8 @@ def load_config(name = nil)
       'Author ID'  => false,
       'Mode'       => false,
       'Tab'        => false,
-      'Before'     => false,
       'After'      => false,
+      'Before'     => false,
       'Min ID'     => false,
       'Max ID'     => false,
       '0th by'     => false,
@@ -392,8 +445,8 @@ def load_config(name = nil)
       'Author ID'  => false,
       'Mode'       => false,
       'Tab'        => false,
-      'Before'     => false,
       'After'      => false,
+      'Before'     => false,
       'Min ID'     => false,
       'Max ID'     => false,
       '0th by'     => false,
@@ -411,6 +464,8 @@ def init
   Search.init
 end
 
+# TODO: Use the log widget rather than these modal windows.
+#       Alternatively, customize these (smaller font, not bold, etc.).
 def info(text)
   Tk.messageBox(type: 'ok', icon: 'info', title: 'Info', message: text)
 end
@@ -461,7 +516,7 @@ fButtons = TkFrame.new($root).grid(row: 1, column: 0, sticky: 'w')
 Button.new(fButtons, 'icons/new.gif',    0, 0, 'New',    ->{ Search.clear })
 Button.new(fButtons, 'icons/save.gif',   0, 1, 'Save',   ->{ Search.save })
 Button.new(fButtons, 'icons/delete.gif', 0, 2, 'Delete', ->{ Search.delete })
-Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ })
+Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ Search.execute })
 Button.new(fButtons, 'icons/npp.gif',    0, 4, 'Play',   ->{ })
 Search.draw($root, 2, 0)
 

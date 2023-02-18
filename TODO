@@ -31,6 +31,10 @@ Frontend:
 - Add log window at the bottom, with scrollbar, to show warning, errors, info...
 - RadioButton to toggle between in-game or in-program pagination, since both
   don't work together properly.
+- Show screenshot previews of userlevels, individually when one is selected.
+- Show result as 25 previews, rather than as a list. Allow to toggle between
+  list and previews using a RadioButton (only if the screenshots can be
+  generated efficiently).
 
 Outte:
 - Implement extra userlevel queries (date ranges, ID ranges, highscore count),
