@@ -39,6 +39,7 @@ Frontend:
   generated efficiently).
 - Lightbulb buttons next to filters and such that provide help in a dialog
   with a smaller font.
+- Headers in level table should reorder by that field, but only those 25 levels.
 
 Outte:
 - Implement extra userlevel queries (date ranges, ID ranges, highscore count),

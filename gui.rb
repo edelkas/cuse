@@ -573,15 +573,21 @@ end
 $root = TkRoot.new(title: "N++ Custom Userlevel Search Engine")
 $root.minsize(190, 640)
 $root.geometry('190x640')
-$root.grid_columnconfigure(0, weight: 1)
-$root.resizable(false, false)
+$root.grid_columnconfigure(1, weight: 1)
+#$root.resizable(false, false)
 $root.bind('ButtonPress'){ |event| defocus(event) }
 
-# Initialize config and others (don't move up)
+# Main frames
+fSearch = TkFrame.new($root).grid(row: 0, column: 0, sticky: 'nws')
+fLevels = TkFrame.new($root).grid(row: 0, column: 1, sticky: 'news')
+fSearch.grid_columnconfigure(0, weight: 1)
+fLevels.grid_columnconfigure(0, weight: 1)
+
+# Initialize config and others (don't move this line up)
 init
 
 # Filters
-fFilters = TkFrame.new($root).grid(row: 0, column: 0, sticky: 'new')
+fFilters = TkFrame.new(fSearch).grid(row: 0, column: 0, sticky: 'new')
 fFilters.grid_columnconfigure(2, weight: 1)
 sample = Search.find('Sample search')
 sample.filters.map{ |name, value|
@@ -590,20 +596,25 @@ sample.filters.map{ |name, value|
 $filters.values.each_with_index{ |f, i| f.grid(i, 0) }
 
 # Search
-fButtons = TkFrame.new($root).grid(row: 1, column: 0, sticky: 'w')
+fButtons = TkFrame.new(fSearch).grid(row: 1, column: 0, sticky: 'w')
 Button.new(fButtons, 'icons/new.gif',    0, 0, 'New',    ->{ Search.clear })
 Button.new(fButtons, 'icons/save.gif',   0, 1, 'Save',   ->{ Search.save })
 Button.new(fButtons, 'icons/delete.gif', 0, 2, 'Delete', ->{ Search.delete })
 Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ Search.execute })
 Button.new(fButtons, 'icons/npp.gif',    0, 4, 'Play',   ->{ })
-Search.draw($root, 2, 0)
+Search.draw(fSearch, 2, 0)
 
 # Navigation
-fButtons2 = TkFrame.new($root).grid(row: 3, column: 0, sticky: 'w')
+fButtons2 = TkFrame.new(fSearch).grid(row: 3, column: 0, sticky: 'w')
 Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
 Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
 Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { })
 Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
+
+# Levels
+25.times.each{ |i|
+  TkLabel.new(fLevels, text: "Test #{i}", font: "Courier 9", background: "#FFBBBB").grid(row: i, column: 0, sticky: 'ew')
+}
 
 
 # Start program
