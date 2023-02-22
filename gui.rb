@@ -1,5 +1,6 @@
 require 'tk'
 require 'date'
+require 'zlib'
 #require 'tkextlib/tkimg'
 #require 'tkextlib/iwidgets'
 require 'byebug'
@@ -439,6 +440,7 @@ class LevelSet
 
   def parse(raw)
     # Parse header
+    return if raw.size < 48
     @header = {
       date:    parse_time(raw[0...16]),
       count:   _unpack(raw[16...20]),
@@ -452,6 +454,7 @@ class LevelSet
     }
 
     # Parse map headers
+    return if raw.size < 48 + 44 * @header[:count]
     @levels = raw[48 ... 48 + 44 * @header[:count]].bytes.each_slice(44).map { |h|
       {
         id:        _unpack(h[0...4], 'l<'),
@@ -461,6 +464,22 @@ class LevelSet
         date:      parse_time(h[28..-1])
       }
     }
+
+    # Parse map data
+    i = 0
+    offset = 48 + 44 * @header[:count]
+    while i < @header[:count]
+      break if raw.size < offset + 6
+      len = _unpack(raw[offset...offset + 4])
+      @levels[i][:count] = _unpack(raw[offset + 4...offset + 6])
+      break if raw.size < offset + len
+      map = Zlib::Inflate.inflate(raw[offset + 6...offset + len])
+      @levels[i][:title] = to_utf8(map[30...158].split("\x00")[0]).strip
+      @levels[i][:tiles] = map[176...1142].bytes.each_slice(42).to_a
+      @levels[i][:objects] = map[1222..-1].bytes.each_slice(5).to_a
+      offset += len
+      i += 1
+    end
   end
 end
 
