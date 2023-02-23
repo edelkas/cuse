@@ -434,8 +434,41 @@ class Filter
 end # End Filter
 
 class LevelSet
-  def initialize(raw)
+  @@tree      = nil # Tk::Tile::Treeview containing levels
+  @@active    = nil # Currently active/visible instance of LevelSet
+  @@sets      = []  # Array of instances
+  @@charwidth = 9   # Average font char size of elements
+  @@minwidth  = 12   # Average font char size of headers
+  
+  def self.init(frame)
+    @@tree = TkTreeview.new(
+      frame,
+      selectmode: 'browse',
+      height:     25,
+      columns:    'id name author date favs',
+      show:       'headings'
+    ).grid(row: 0, column: 0, sticky: 'news')
+    @@tree.tag_configure('tree', background: '#FF7777', font: 'Courier 9')
+    @@tree.column_configure('id',     anchor: 'e', minwidth: 2 * @@minwidth, width:  7 * @@charwidth)
+    @@tree.column_configure('name',   anchor: 'w', minwidth: 4 * @@minwidth, width: 16 * @@charwidth)
+    @@tree.column_configure('author', anchor: 'w', minwidth: 6 * @@minwidth, width: 16 * @@charwidth)
+    @@tree.column_configure('date',   anchor: 'w', minwidth: 4 * @@minwidth, width: 16 * @@charwidth)
+    @@tree.column_configure('favs',   anchor: 'e', minwidth: 2 * @@minwidth, width:  3 * @@charwidth)
+    @@tree.heading_configure('id',     text: 'ID')
+    @@tree.heading_configure('name',   text: 'Name')
+    @@tree.heading_configure('author', text: 'Author')
+    @@tree.heading_configure('date',   text: 'Date')
+    @@tree.heading_configure('favs',   text: '++')
+    25.times.each{ |i|
+      @@tree.insert('', 'end', values: ['0123456', 'Tjlpq¡1', '3', '4', '5'])
+    }
+  end
+
+  def initialize(search, raw)
+    @search = search
     parse(raw)
+    @@sets << self
+    @@active = self
   end
 
   def parse(raw)
@@ -480,6 +513,10 @@ class LevelSet
       offset += len
       i += 1
     end
+  end
+
+  def update_labels
+    
   end
 end
 
@@ -554,6 +591,8 @@ end
 def init
   load_config
   Search.init
+  Tk::Tile::Style.configure('Treeview', rowheight: 12, font: 'Courier 9', background: "#FDD", fieldbackground: "#FDD")
+  Tk::Tile::Style.configure('Heading', font: 'TkDefaultFont 10')
 end
 
 # Switch focus to root if we click outside of a widget
@@ -571,14 +610,15 @@ end
 
 # Root window
 $root = TkRoot.new(title: "N++ Custom Userlevel Search Engine")
-$root.minsize(190, 640)
-$root.geometry('190x640')
+w, h = 720, 640
+$root.minsize(w, h)
+$root.geometry("#{w}x#{h}")
 $root.grid_columnconfigure(1, weight: 1)
-#$root.resizable(false, false)
+$root.resizable(true, false)
 $root.bind('ButtonPress'){ |event| defocus(event) }
 
 # Main frames
-fSearch = TkFrame.new($root).grid(row: 0, column: 0, sticky: 'nws')
+fSearch = TkFrame.new($root, width: 190, height: 640).grid(row: 0, column: 0, sticky: 'nws').grid_propagate(0)
 fLevels = TkFrame.new($root).grid(row: 0, column: 1, sticky: 'news')
 fSearch.grid_columnconfigure(0, weight: 1)
 fLevels.grid_columnconfigure(0, weight: 1)
@@ -612,9 +652,7 @@ Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { })
 Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
 
 # Levels
-25.times.each{ |i|
-  TkLabel.new(fLevels, text: "Test #{i}", font: "Courier 9", background: "#FFBBBB").grid(row: i, column: 0, sticky: 'ew')
-}
+LevelSet.init(fLevels)
 
 
 # Start program

@@ -15,6 +15,9 @@ Backend:
 - Save latest state (tabs, searches...) when closing, and load them at the start.
 - Optimization: Requests to outte only return the level IDs, and then the program
   makes a 2nd request for the map data of those maps that aren't cached yet.
+- Allow to save/load level sets (not all, just visible ones).
+- Option to manually erase cache, so that the search gets performed again for
+  cached pages.
 
 Frontend:
 - N++ button should perhaps be a double state one (active/deactivate proxying),
@@ -40,6 +43,7 @@ Frontend:
 - Lightbulb buttons next to filters and such that provide help in a dialog
   with a smaller font.
 - Headers in level table should reorder by that field, but only those 25 levels.
+  This can be done with the "command" option in "heading_configure".
 
 Outte:
 - Implement extra userlevel queries (date ranges, ID ranges, highscore count),
