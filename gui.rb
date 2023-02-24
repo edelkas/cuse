@@ -18,7 +18,6 @@ COLOR_LOG_ERROR   = "#F00"
 
 $config  = {}
 $filters = {}
-$log     = nil
 
 # Aux functions
 def _pack(n, size)

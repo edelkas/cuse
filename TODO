@@ -25,7 +25,7 @@ Frontend:
 - Add tabs to the userlevel result table, so that multiple searches and result sets
   can be maintained simultaneously. Keep everything (filters, userlevels, paging...)
   in memory. Also, move page navigation to this part, and add button to add/remove
-  tabs.
+  tabs, invidually and globally.
 - As an alternative, have a CLI + Enter option to execute searches.
 - Help tooltips for filters and others
 - Checkbox to check/uncheck all filters (w/o changing their values).
@@ -47,7 +47,9 @@ Frontend:
 
 Outte:
 - Implement extra userlevel queries (date ranges, ID ranges, highscore count),
-  perhaps by adding new fields to Userlevel table for quickness.
+  perhaps by adding new fields to Userlevel table for quickness. For date ranges,
+  add aux functions to convert date into ID, and then just find the intersection of
+  the date and ID ranges (if provided). ID is indexed, so this should be fast.
 - Look into caching searches (before cropping the full list), so that page browsing
   (which makes a new query to outte) is quick. Look into expiring 
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
