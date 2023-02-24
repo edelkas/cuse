@@ -434,40 +434,54 @@ class Filter
 end # End Filter
 
 class LevelSet
+  attr_reader :levels
+
   @@tree      = nil # Tk::Tile::Treeview containing levels
   @@active    = nil # Currently active/visible instance of LevelSet
   @@sets      = []  # Array of instances
   @@charwidth = 9   # Average font char size of elements
   @@minwidth  = 12   # Average font char size of headers
+  @@fields    = {
+    'id'     => { anchor: 'e', width: 7  },
+    'title'  => { anchor: 'w', width: 16 },
+    'author' => { anchor: 'w', width: 16 },
+    'date'   => { anchor: 'w', width: 16 },
+    '++'     => { anchor: 'e', width: 3  }
+  }
   
   def self.init(frame)
     @@tree = TkTreeview.new(
       frame,
       selectmode: 'browse',
       height:     25,
-      columns:    'id name author date favs',
+      columns:    @@fields.keys.join(' '),
       show:       'headings'
     ).grid(row: 0, column: 0, sticky: 'news')
-    @@tree.tag_configure('tree', background: '#FF7777', font: 'Courier 9')
-    @@tree.column_configure('id',     anchor: 'e', minwidth: 2 * @@minwidth, width:  7 * @@charwidth)
-    @@tree.column_configure('name',   anchor: 'w', minwidth: 4 * @@minwidth, width: 16 * @@charwidth)
-    @@tree.column_configure('author', anchor: 'w', minwidth: 6 * @@minwidth, width: 16 * @@charwidth)
-    @@tree.column_configure('date',   anchor: 'w', minwidth: 4 * @@minwidth, width: 16 * @@charwidth)
-    @@tree.column_configure('favs',   anchor: 'e', minwidth: 2 * @@minwidth, width:  3 * @@charwidth)
-    @@tree.heading_configure('id',     text: 'ID')
-    @@tree.heading_configure('name',   text: 'Name')
-    @@tree.heading_configure('author', text: 'Author')
-    @@tree.heading_configure('date',   text: 'Date')
-    @@tree.heading_configure('favs',   text: '++')
-    25.times.each{ |i|
-      @@tree.insert('', 'end', values: ['0123456', 'Tjlpq¡1', '3', '4', '5'])
+    @@fields.each{ |name, attr|
+      @@tree.column_configure(name, anchor: attr[:anchor], minwidth: name.length * @@minwidth, width: attr[:width] * @@charwidth)
+      @@tree.heading_configure(name, text: name.capitalize)
+    }
+  end
+
+  def self.update_tree
+    @@tree.children.each(&:delete)
+    return if @@active.nil?
+    @@active.levels.each{ |l|
+      @@tree.insert('', 'end', values: @@fields.keys.map{ |f| l[f] })
     }
   end
 
   def initialize(search, raw)
     @search = search
+    @header = {}
+    @levels = []
     parse(raw)
     @@sets << self
+    activate
+    self.class.update_tree
+  end
+
+  def activate
     @@active = self
   end
 
@@ -490,11 +504,11 @@ class LevelSet
     return if raw.size < 48 + 44 * @header[:count]
     @levels = raw[48 ... 48 + 44 * @header[:count]].bytes.each_slice(44).map { |h|
       {
-        id:        _unpack(h[0...4], 'l<'),
-        author_id: _unpack(h[0...8], 'l<'),
-        author:    to_utf8(h[8...24].split("\x00")[0]).strip,
-        favs:      _unpack(h[24...28], 'l<'),
-        date:      parse_time(h[28..-1])
+        'id'        => _unpack(h[0...4], 'l<'),
+        'author_id' => _unpack(h[0...8], 'l<'),
+        'author'    => to_utf8(h[8...24].split("\x00")[0]).strip,
+        '++'        => _unpack(h[24...28], 'l<'),
+        'date'      => parse_time(h[28..-1])
       }
     }
 
@@ -504,12 +518,12 @@ class LevelSet
     while i < @header[:count]
       break if raw.size < offset + 6
       len = _unpack(raw[offset...offset + 4])
-      @levels[i][:count] = _unpack(raw[offset + 4...offset + 6])
+      @levels[i]['count'] = _unpack(raw[offset + 4...offset + 6])
       break if raw.size < offset + len
       map = Zlib::Inflate.inflate(raw[offset + 6...offset + len])
-      @levels[i][:title] = to_utf8(map[30...158].split("\x00")[0]).strip
-      @levels[i][:tiles] = map[176...1142].bytes.each_slice(42).to_a
-      @levels[i][:objects] = map[1222..-1].bytes.each_slice(5).to_a
+      @levels[i]['title'] = to_utf8(map[30...158].split("\x00")[0]).strip
+      @levels[i]['tiles'] = map[176...1142].bytes.each_slice(42).to_a
+      @levels[i]['objects'] = map[1222..-1].bytes.each_slice(5).to_a
       offset += len
       i += 1
     end
