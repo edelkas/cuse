@@ -1,15 +1,6 @@
 require 'net/http'
 require 'socket'
 
-# TODO:
-# - Extra filters: start date, end date, 0th owner, etc.
-# - Create cache system, storing userlevel files in a big binary, using a hash
-#   encoding all search query terms to determine if that query is cached or not.
-# - Create new field in UserlevelData table of outte's db to contain the Zlibbed
-#   block and header, ready to be dumped in the final file, for efficiency.
-# - What happens when you switch userlevel tabs very quickly? (sockets closing, etc).
-# - Look into the userlevel cache, perhaps we can disable it.
-# - Make program check Github regularly for new versions, possibly even auto-update
 # NOTES (for vid/tut):
 # - Levels are cached, so switch tab / search / wait
 # - If program exits badly, reopen and reclose to repatch library

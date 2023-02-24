@@ -10,9 +10,15 @@ INITIAL_DATE    = Date.new(2015, 6, 2)
 DATE_FORMAT     = "%d/%m/%Y"
 TIME_FORMAT_IN  = "%Y-%m-%d-%H:%M"
 TIME_FORMAT_OUT = "%d/%m/%Y %H:%M"
+TIME_FORMAT_LOG = "%H:%M:%S"
+
+COLOR_LOG_NORMAL  = "#000"
+COLOR_LOG_WARNING = "#F70"
+COLOR_LOG_ERROR   = "#F00"
 
 $config  = {}
 $filters = {}
+$log     = nil
 
 # Aux functions
 def _pack(n, size)
@@ -50,20 +56,6 @@ def format_time(time)
   time.strftime(TIME_FORMAT_OUT)
 end
 
-# TODO: Use the log widget rather than these modal windows.
-#       Alternatively, customize these (smaller font, not bold, etc.).
-def info(text)
-  Tk.messageBox(type: 'ok', icon: 'info', title: 'Info', message: text)
-end
-
-def warn(text)
-  Tk.messageBox(type: 'ok', icon: 'warning', title: 'Warning', message: text)
-end
-
-def err(text)
-  Tk.messageBox(type: 'ok', icon: 'error', title: 'Error', message: text)
-end
-
 class Tooltip
   def initialize(widget, text = " ? ")
     @wait       = 2000 # not in use, 'after' didnt work
@@ -99,6 +91,35 @@ class Button < TkButton
   end
 end # End Button
 
+class Scrollable
+  attr_reader :widget
+
+  def initialize(frame, row, col, &block)
+    @frame = TkFrame.new(frame).grid(row: row, column: col, sticky: 'news')
+    @frame.grid_columnconfigure(0, weight: 1)
+    @scroll = TkScrollbar.new(@frame, orient: 'vertical')
+    @widget = (yield @frame).grid(row: 0, column: 0, sticky: 'news')
+    @scroll.command = -> (*args) { @widget.yview(*args) }
+    @widget.yscrollcommand = -> (*args) { @scroll.set(*args) }
+    update
+  end
+
+  def update
+    lines <= @widget.height ? @scroll.ungrid : @scroll.grid(row: 0, column: 1, sticky: 'ns')
+  end
+
+  def lines
+    case @widget.class.to_s
+    when "Tk::Listbox"
+      @widget.size
+    when "Tk::Text"
+      @widget.index('end').split('.')[0].to_i - 2
+    else
+      0
+    end
+  end
+end
+
 # Search profiles
 class Search
   attr_accessor :name, :filters, :states, :hidden
@@ -128,6 +149,7 @@ class Search
     populate
   end
 
+  # TODO: Use Scrollable
   def self.draw(frame, row, col)
     @@frame = TkFrame.new(frame).grid(row: row, column: col, sticky: 'new')
     @@frame.grid_columnconfigure(0, weight: 1)
@@ -276,7 +298,7 @@ class Filter
     end
 
     if warn
-      warn("Some filters were fixed:\n#{@@warnings.join("\n")}")
+      Log.warn("Some filters were fixed:\n#{@@warnings.join("\n")}")
       @@warnings = []
     end
   end
@@ -449,14 +471,14 @@ class LevelSet
     '++'     => { anchor: 'e', width: 3  }
   }
   
-  def self.init(frame)
+  def self.init(frame, row, col)
     @@tree = TkTreeview.new(
       frame,
       selectmode: 'browse',
       height:     25,
       columns:    @@fields.keys.join(' '),
       show:       'headings'
-    ).grid(row: 0, column: 0, sticky: 'news')
+    ).grid(row: row, column: col, sticky: 'news')
     @@fields.each{ |name, attr|
       @@tree.column_configure(name, anchor: attr[:anchor], minwidth: name.length * @@minwidth, width: attr[:width] * @@charwidth)
       @@tree.heading_configure(name, text: name.capitalize)
@@ -532,7 +554,41 @@ class LevelSet
   def update_labels
     
   end
-end
+end # End LevelSet
+
+class Log
+  @@log    = nil # TkText widget to store the info
+  @@scroll = nil # TkScrollbar widget for the text widget
+  @@frame  = nil # TkFrame to hold the widgets
+
+  def self.init(frame, row, col)
+    @@log = Scrollable.new(frame, row, col) do |f|
+      TkText.new(f, font: 'TkDefaultFont 8', foreground: COLOR_LOG_NORMAL, state: 'disabled', height: 8, wrap: 'char')
+    end
+    @@log.widget.tag_configure('error', foreground: COLOR_LOG_WARNING)
+    @@log.widget.tag_configure('warning', foreground: COLOR_LOG_ERROR)
+  end
+
+  def self.log(type, text, tag = '')
+    @@log.widget.configure(state: 'normal')
+    @@log.widget.insert('end', "[#{Time.now.strftime(TIME_FORMAT_LOG)}] #{type}#{type.empty? ? '' : ': '}#{text}\n", tag)
+    @@log.widget.configure(state: 'disabled')
+    @@log.widget.see('end - 2l')
+    @@log.update
+  end
+
+  def self.info(text)
+    log('', text)
+  end
+
+  def self.warn(text)
+    log('Warning', text, 'warning')
+  end
+
+  def self.err(text)
+    log('Error', text, 'error')
+  end
+end # End Log
 
 # Load and save config
 def load_config(name = nil)
@@ -663,11 +719,14 @@ fButtons2 = TkFrame.new(fSearch).grid(row: 3, column: 0, sticky: 'w')
 Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
 Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
 Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { })
-Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
+Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { Log.info("Test") })
 
 # Levels
-LevelSet.init(fLevels)
+LevelSet.init(fLevels, 0, 0)
 
+# Log
+Log.init(fLevels, 1, 0)
+Log.info("Initialized")
 
 # Start program
 Tk.mainloop
