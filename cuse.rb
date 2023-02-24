@@ -13,6 +13,9 @@ require 'zlib'
 #                      CONSTANTS AND GLOBAL VARIABLES                          #
 ################################################################################
 
+# DO NOT modify the value of anything marked with a #! comment, their value
+# depends on N++ or outte, so the program won't work if changed.
+
 # < ------------------------- Backend constants ------------------------------ >
 
 # General behaviour constants
@@ -28,40 +31,40 @@ EXPORT_REQ = false # Export only requests
 EXPORT_RES = false # Export only responses
 
 # Network constants
-PORT_NPP      = 8124 # Port used to comunicate with the game
-PORT_OUTTE    = 8125 # Port used to comunicate with outte
-TARGET        = "https://dojo.nplusplus.ninja"
-PROXY         = "http://localhost:#{PORT_NPP}".ljust(TARGET.length, "\x00")
-OUTTE         = TEST ? "127.0.0.1" : "45.32.150.168"
+TARGET        = "https://dojo.nplusplus.ninja" #! Metanet server address
+OUTTE         = TEST ? "127.0.0.1" : "45.32.150.168" #! outte server address
+PORT_OUTTE    = 8125 #! Default port used to comunicate with outte
 TIMEOUT_NPP   = 0.25 # Time to wait for the game (local, so quick)
 TIMEOUT_OUTTE = 5    # Time to wait for outte (not local, so long)
 
-# < ------------------------- Frontend constants ----------------------------- >
+# < ------------------------- Backend variables ------------------------------ >
 
-# Interface constants
-DEFAULT_SEARCH  = "Unnamed search"
-INITIAL_DATE    = Date.new(2015, 6, 2)
-DATE_FORMAT     = "%d/%m/%Y"
-TIME_FORMAT_IN  = "%Y-%m-%d-%H:%M"
-TIME_FORMAT_OUT = "%d/%m/%Y %H:%M"
-TIME_FORMAT_LOG = "%H:%M:%S"
-
-# Colors
-COLOR_LOG_NORMAL  = "#000"
-COLOR_LOG_WARNING = "#F70"
-COLOR_LOG_ERROR   = "#F00"
-
-# < ------------------------- Global variables ------------------------------- >
-
-# Backend variables
-$last_req      = "rzcglfrg" # Last request string input by user
+$port_npp      = 8124 # Default port used to comunicate with the game
+$proxy         = "http://localhost:#{$port_npp}".ljust(TARGET.length, "\x00") #!
+$last_req      = "rzcglfrg" #! Last request string input by user
 $socket        = nil  # Permanent socket with the game
 $res           = nil  # Store outte's response, to forward to the game
 $count         = 1    # Proxied request counter
 $root_page     = 0    # Page that'll show at the top in-game
 $page          = 0    # Current page (different if we've scrolled down)
 
-# Frontend variables
+# < ------------------------- Frontend constants ----------------------------- >
+
+# Interface constants
+DEFAULT_SEARCH   = "Unnamed search"     # Default value of search profiles
+INITIAL_DATE     = Date.new(2015, 6, 2) # Date of first userlevel
+DATE_FORMAT      = "%d/%m/%Y"           #! Format for date filter in searches
+TIME_FORMAT_NPP  = "%Y-%m-%d-%H:%M"     #! Datetime format used by N++
+TIME_FORMAT_CUSE = "%d/%m/%Y %H:%M"     # Datetime format used by CUSE
+TIME_FORMAT_LOG  = "%H:%M:%S"           # Time format for the log box
+
+# Colors
+COLOR_LOG_NORMAL  = "#000"
+COLOR_LOG_WARNING = "#F70"
+COLOR_LOG_ERROR   = "#F00"
+
+# < ------------------------- Frontend variables ----------------------------- >
+
 $config  = {}
 $filters = {}
 
@@ -69,13 +72,9 @@ $filters = {}
 #                                    UTILS                                     #
 ################################################################################
 
-def clear
-  print "\r".ljust(80, ' ') + "\r"
-end
-
-def log(line)
+def log_req(line)
   method, path, protocol = line.split  
-  puts "#{"%-4s" % method} #{path.split('?')[0].split('/')[-1]}"
+  Log.info("#{"%-4s" % method} #{path.split('?')[0].split('/')[-1]}")
 end
 
 def _pack(n, size)
@@ -106,11 +105,11 @@ def format_date(date)
 end
 
 def parse_time(str)
-  DateTime.strptime(str, TIME_FORMAT_IN) rescue nil
+  DateTime.strptime(str, TIME_FORMAT_NPP) rescue nil
 end
 
 def format_time(time)
-  time.strftime(TIME_FORMAT_OUT)
+  time.strftime(TIME_FORMAT_CUSE)
 end
 
 ################################################################################
@@ -129,13 +128,13 @@ def find_lib
 end
 
 def patch
-  IO.binwrite(find_lib, IO.binread(find_lib).gsub(TARGET, PROXY))
-  puts 'Patched'
+  IO.binwrite(find_lib, IO.binread(find_lib).gsub(TARGET, $proxy))
+  Log.info('Patched files')
 end
 
 def depatch
-  IO.binwrite(find_lib, IO.binread(find_lib).gsub(PROXY, TARGET))
-  puts 'Depatched'
+  IO.binwrite(find_lib, IO.binread(find_lib).gsub($proxy, TARGET))
+  Log.info('Depatched files')
 end
 
 # < ---------------------------- Socket management --------------------------- >
@@ -256,15 +255,21 @@ end
 # < ----------------------- Main program flow control ------------------------ >
 
 def server_startup
+  $socket = TCPServer.new($port_npp)
   patch
-  $socket = TCPServer.new(PORT_NPP)
-  puts 'Started'
+  Log.info('Server started')
+rescue Errno::EADDRINUSE
+  $port_npp += 1
+  $port_npp += 1 if $port_npp == PORT_OUTTE
+  retry
+rescue
+  Log.err("Couldn't start server, try restarting.")
 end
 
 def server_loop
   client = $socket.accept
   req = client.gets
-  log(req)
+  log_req(req)
   method, path, protocol = req.split
   req << read(client, true).to_s
   IO.binwrite("req_#{$count}", req) if EXPORT || EXPORT_REQ
@@ -279,16 +284,13 @@ def server_loop
   client.close
   $count += 1
 rescue => e
-  puts "Unknown error."
-  puts e
-  puts e.backtrace.join("\n")
+  Log.err('Unknown server error.')
   client.close if client.is_a?(BasicSocket)
 end
 
 def server_shutdown
-  clear
   depatch
-  puts "Stopped"
+  Log.info('Server stopped')
 end
 
 def server_call(req = $last_req)
@@ -298,10 +300,10 @@ def server_call(req = $last_req)
     $res = read(conn, false)
     $last_req = req
     conn.close
-    puts($res.nil? ? "Connection to outte timed out." : "Received #{$res.size} bytes from outte.")
+    $res.nil? ? Log.err('Connection to outte timed out') : Log.info("Received #{$res.size} bytes from outte")
   end
-rescue
-  puts "Unable to connect to outte."
+rescue => e
+  Log.err("Unable to connect to outte")
 end
 
 ################################################################################
@@ -904,16 +906,22 @@ class Log
     @@log = Scrollable.new(frame, row, col) do |f|
       TkText.new(f, font: 'TkDefaultFont 8', foreground: COLOR_LOG_NORMAL, state: 'disabled', height: 8, wrap: 'char')
     end
-    @@log.widget.tag_configure('error', foreground: COLOR_LOG_WARNING)
-    @@log.widget.tag_configure('warning', foreground: COLOR_LOG_ERROR)
+    @@log.widget.tag_configure('error', foreground: COLOR_LOG_ERROR)
+    @@log.widget.tag_configure('warning', foreground: COLOR_LOG_WARNING)
   end
 
   def self.log(type, text, tag = '')
+    type += ': ' if type.is_a?(String) && !type.empty?
+    msg = "[#{Time.now.strftime(TIME_FORMAT_LOG)}] #{type.to_s}#{text.to_s}\n"
     @@log.widget.configure(state: 'normal')
-    @@log.widget.insert('end', "[#{Time.now.strftime(TIME_FORMAT_LOG)}] #{type}#{type.empty? ? '' : ': '}#{text}\n", tag)
+    @@log.widget.insert('end', msg, tag)
     @@log.widget.configure(state: 'disabled')
     @@log.widget.see('end - 2l')
     @@log.update
+    print(msg)
+  rescue
+    # Necessary rescue to catch IOError when the program is not opened from
+    # the console, causing STDOUT to not be open.
   end
 
   def self.info(text)
@@ -977,7 +985,7 @@ $root.geometry("#{w}x#{h}")
 $root.grid_columnconfigure(1, weight: 1)
 $root.resizable(true, false)
 $root.bind('ButtonPress'){ |event| defocus(event) }
-$root.protocol("WM_DELETE_WINDOW", destroy_callback)
+$root.protocol("WM_DELETE_WINDOW", -> { destroy_callback })
 
 # Main frames
 fSearch = TkFrame.new($root, width: 190, height: 640).grid(row: 0, column: 0, sticky: 'nws').grid_propagate(0)
@@ -1010,7 +1018,7 @@ Search.draw(fSearch, 2, 0)
 fButtons2 = TkFrame.new(fSearch).grid(row: 3, column: 0, sticky: 'w')
 Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
 Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
-Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { destroy })
+Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { server_call })
 Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { Log.info("Test") })
 
 # Levels
