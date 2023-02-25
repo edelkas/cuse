@@ -7,10 +7,6 @@ Backend:
 - Make program check Github regularly for new versions, possibly even auto-update.
 - Allow for regex searches.
 - Have config file: default date format, default filter values.
-- Validate text fields (numeric, dates, etc). Disable incompatible filters when
-  enabling one filter (e.g. disable author ID when enabling author and viceversa)
-- Pop up warnings for conflicting filters (e.g. author AND author ID simultaneously,
-  0th owner is and is not the same, etc). Config option to disable them.
 - Multiple config profiles?
 - Save latest state (tabs, searches...) when closing, and load them at the start.
 - Optimization: Requests to outte only return the level IDs, and then the program
@@ -28,22 +24,19 @@ Frontend:
   tabs, invidually and globally.
 - As an alternative, have a CLI + Enter option to execute searches.
 - Help tooltips for filters and others
-- Checkbox to check/uncheck all filters (w/o changing their values).
-- Button to close all search tabs.
-- Make tooltips go to left if near the right border (or just force it to be
-  inside somehow, for instance, draw it to the right in the left half,
-  and to the left in the right half, and similarly vertically).
-- Add log window at the bottom, with scrollbar, to show warning, errors, info...
 - RadioButton to toggle between in-game or in-program pagination, since both
   don't work together properly.
-- Show screenshot previews of userlevels, individually when one is selected.
-- Show result as 25 previews, rather than as a list. Allow to toggle between
-  list and previews using a RadioButton (only if the screenshots can be
-  generated efficiently).
 - Lightbulb buttons next to filters and such that provide help in a dialog
   with a smaller font.
 - Headers in level table should reorder by that field, but only those 25 levels.
   This can be done with the "command" option in "heading_configure".
+- Screenshots:
+    * Show screenshot previews of userlevels, individually when one is selected.
+    * Show result as 25 previews, rather than as a list. Allow to toggle between
+      list and previews using a RadioButton (only if the screenshots can be
+      generated efficiently).
+    * Tooltip to show screenshot when hovering a userlevel, or show userlevel info
+      when hovering the screenshot if in screenshot mode.
 
 Outte:
 - Implement extra userlevel queries (date ranges, ID ranges, highscore count),
@@ -55,6 +48,6 @@ Outte:
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
   and header, ready to be dumped in the final file, for efficiency.
 
-INVESTIGATE:
+Investigate:
 - What happens when you switch userlevel tabs very quickly? (sockets closing, etc).
 - Look into N++'s userlevel cache, perhaps we can disable it.

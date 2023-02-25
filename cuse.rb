@@ -695,6 +695,7 @@ class Filter
     }
   end
 
+  # TODO: Add check (and warning) for 0th owner == 0th not owner
   def self.validate(warn = false)
     # Validate all filters individually
     @@filters.each{ |name, f| f.validate(true) }
