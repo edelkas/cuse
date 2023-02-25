@@ -23,6 +23,7 @@ TEST       = true  # Use test outte (at localhost)
 INTERCEPT  = true  # Whether to intercept or forward userlevel requests
 ALL_TABS   = false # Intercept from all tabs (as opposed to only Search)
 PAGING     = true  # Whether to allow scrolling in-game to change the page
+LOG_CLI    = false # Log to terminal as well
 
 # Debug constants
 EXPORT     = false # Export raw HTTP requests and responses
@@ -56,7 +57,7 @@ INITIAL_DATE     = Date.new(2015, 6, 2) # Date of first userlevel
 DATE_FORMAT      = "%d/%m/%Y"           #! Format for date filter in searches
 TIME_FORMAT_NPP  = "%Y-%m-%d-%H:%M"     #! Datetime format used by N++
 TIME_FORMAT_CUSE = "%d/%m/%Y %H:%M"     # Datetime format used by CUSE
-TIME_FORMAT_LOG  = "%H:%M:%S"           # Time format for the log box
+TIME_FORMAT_LOG  = "%H:%M:%S.%L"           # Time format for the log box
 
 # Colors
 COLOR_LOG_NORMAL  = "#000"
@@ -72,9 +73,14 @@ $filters = {}
 #                                    UTILS                                     #
 ################################################################################
 
-def log_req(line)
-  method, path, protocol = line.split  
-  Log.info("#{"%-4s" % method} #{path.split('?')[0].split('/')[-1]}")
+def log_exception(msg, e)
+  Log.err(msg) unless msg.empty?
+  Log.debug(e)
+  Log.trace(e.backtrace.join("\n"))
+end
+
+def time(t)
+  "%.3fms" % (1000 * (Time.now - t))
 end
 
 def _pack(n, size)
@@ -128,11 +134,15 @@ def find_lib
 end
 
 def patch
+  path = find_lib
+  Log.debug("Patching #{path}...")
   IO.binwrite(find_lib, IO.binread(find_lib).gsub(TARGET, $proxy))
   Log.info('Patched files')
 end
 
 def depatch
+  path = find_lib
+  Log.debug("Depatching #{path}...")
   IO.binwrite(find_lib, IO.binread(find_lib).gsub($proxy, TARGET))
   Log.info('Depatched files')
 end
@@ -258,33 +268,40 @@ def server_startup
   $socket = TCPServer.new($port_npp)
   patch
   Log.info('Server started')
+  Log.debug("Listening at port #{$port_npp}")
 rescue Errno::EADDRINUSE
   $port_npp += 1
   $port_npp += 1 if $port_npp == PORT_OUTTE
   retry
-rescue
-  Log.err("Couldn't start server, try restarting.")
+rescue => e
+  log_exception("Couldn't start server, try restarting", e)
 end
 
 def server_loop
   client = $socket.accept
   req = client.gets
-  log_req(req)
   method, path, protocol = req.split
+  Log.debug("Received #{method} to #{path.split('?')[0].split('/')[-1]}")
   req << read(client, true).to_s
   IO.binwrite("req_#{$count}", req) if EXPORT || EXPORT_REQ
   query = path.split('?')[0].split('/')[-1]
+  t = Time.now
   if method == 'GET' && (query == 'levels' || ALL_TABS && query == 'query_levels')
+    Log.debug("Intercepting #{method}...")
     res = intercept(req)
+    Log.debug("Intercepted with #{res.size} bytes (#{time(t)})")
   else
+    Log.debug("Forwarding #{method} to Metanet...")
     res = forward(req)
+    Log.debug("Received #{res.size} bytes from Metanet (#{time(t)})")
   end
   IO.binwrite("res_#{$count}", res) if EXPORT || EXPORT_RES
   client.write(res)
   client.close
+  Log.debug("Sent #{res.size} bytes to N++")
   $count += 1
 rescue => e
-  Log.err('Unknown server error.')
+  log_exception('Unknown server error', e)
   client.close if client.is_a?(BasicSocket)
 end
 
@@ -295,15 +312,19 @@ end
 
 def server_call(req = $last_req)
   Socket.tcp(OUTTE, PORT_OUTTE) do |conn|
-    conn.write("page #{$page + 1} #{req}")
+    t = Time.now
+    msg = "page #{$page + 1} #{req}"
+    Log.debug("Requesting outte \"#{msg}\"...")
+    conn.write(msg)
     conn.close_write
+    Log.debug("Waiting for outte...")
     $res = read(conn, false)
     $last_req = req
     conn.close
-    $res.nil? ? Log.err('Connection to outte timed out') : Log.info("Received #{$res.size} bytes from outte")
+    $res.nil? ? Log.err('Connection to outte timed out') : Log.debug("Received #{$res.size} bytes from outte (#{time(t)})")
   end
 rescue => e
-  Log.err("Unable to connect to outte")
+  log_exception('Unable to connect to outte', e)
 end
 
 ################################################################################
@@ -901,13 +922,34 @@ class Log
   @@log    = nil # TkText widget to store the info
   @@scroll = nil # TkScrollbar widget for the text widget
   @@frame  = nil # TkFrame to hold the widgets
+  @@level  = nil # Logging level (1 most important, 4 least)
 
   def self.init(frame, row, col)
-    @@log = Scrollable.new(frame, row, col) do |f|
+    @@frame = TkFrame.new(frame).grid(row: row, column: col, sticky: 'news')
+    @@frame.grid_columnconfigure(0, weight: 1)
+    @@log = Scrollable.new(@@frame, 0, 0) do |f|
       TkText.new(f, font: 'TkDefaultFont 8', foreground: COLOR_LOG_NORMAL, state: 'disabled', height: 8, wrap: 'char')
     end
+    @@frame2 = TkFrame.new(@@frame).grid(row: 1, column: 0, sticky: 'ew')
+    @@level = TkVariable.new(2)
+    TkLabel.new(@@frame2, text: 'Logging level:').grid(row: 0, column: 0)
+    @@b1 = TkRadiobutton.new(@@frame2, text: 'Minimal', variable: @@level, value: 1, command: -> { update_level })
+                        .grid(row: 0, column: 1)
+    @@t1 = Tooltip.new(@@b1, 'Only show errors and important info.')
+    @@b2 = TkRadiobutton.new(@@frame2, text: 'Normal', variable: @@level, value: 2, command: -> { update_level })
+                        .grid(row: 0, column: 2)
+    @@t2 = Tooltip.new(@@b2, 'Show all normal info.')
+    @@b3 = TkRadiobutton.new(@@frame2, text: 'Verbose', variable: @@level, value: 3, command: -> { update_level })
+                        .grid(row: 0, column: 3)
+    @@t3 = Tooltip.new(@@b3, 'Show normal info and debug info.')
+    @@b4 = TkRadiobutton.new(@@frame2, text: 'All', variable: @@level, value: 4, command: -> { update_level })
+                        .grid(row: 0, column: 4)
+    @@t4 = Tooltip.new(@@b4, 'Show everything, including debug and error traces.')
+    # Tags for text color
     @@log.widget.tag_configure('error', foreground: COLOR_LOG_ERROR)
     @@log.widget.tag_configure('warning', foreground: COLOR_LOG_WARNING)
+    # Tags for log level (determines visibility)
+    update_level
   end
 
   def self.log(type, text, tag = '')
@@ -916,24 +958,46 @@ class Log
     @@log.widget.configure(state: 'normal')
     @@log.widget.insert('end', msg, tag)
     @@log.widget.configure(state: 'disabled')
-    @@log.widget.see('end - 2l')
+    scroll
     @@log.update
-    print(msg)
+    print(msg) if LOG_CLI
   rescue
     # Necessary rescue to catch IOError when the program is not opened from
     # the console, causing STDOUT to not be open.
   end
 
-  def self.info(text)
-    log('', text)
+  def self.scroll
+    @@log.widget.see('end - 2l')
+  end
+
+  def self.update_level
+    (1..4).each{ |l| @@log.widget.tag_configure(l.to_s, elide: @@level.to_i < l) }
+    scroll
+  end
+
+  # Different log functions for different levels of severity
+  def self.err(text)
+    log('Error', text, 'error 1')
+  end
+
+  def self.broadcast(text)
+    log('', text, '1')
   end
 
   def self.warn(text)
-    log('Warning', text, 'warning')
+    log('Warning', text, 'warning 2')
   end
 
-  def self.err(text)
-    log('Error', text, 'error')
+  def self.info(text)
+    log('', text, '2')
+  end
+
+  def self.debug(text)
+    log('', text, '3')
+  end
+
+  def self.trace(text)
+    log('', text, '4')
   end
 end # End Log
 
@@ -1019,14 +1083,14 @@ fButtons2 = TkFrame.new(fSearch).grid(row: 3, column: 0, sticky: 'w')
 Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
 Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
 Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { server_call })
-Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { Log.info("Test") })
+Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
 
 # Levels
 LevelSet.init(fLevels, 0, 0)
 
 # Log
 Log.init(fLevels, 1, 0)
-Log.info("Initialized")
+Log.broadcast("Initialized")
 
 ################################################################################
 #                                    START                                     #
