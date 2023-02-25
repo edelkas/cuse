@@ -22,7 +22,7 @@ require 'zlib'
 TEST       = true  # Use test outte (at localhost)
 INTERCEPT  = true  # Whether to intercept or forward userlevel requests
 ALL_TABS   = false # Intercept from all tabs (as opposed to only Search)
-PAGING     = true  # Whether to allow scrolling in-game to change the page
+PAGING     = false # Whether to allow scrolling in-game to change the page
 LOG_CLI    = false # Log to terminal as well
 
 # Debug constants
@@ -40,14 +40,14 @@ TIMEOUT_OUTTE = 5    # Time to wait for outte (not local, so long)
 
 # < ------------------------- Backend variables ------------------------------ >
 
-$port_npp      = 8124 # Default port used to comunicate with the game
-$proxy         = "http://localhost:#{$port_npp}".ljust(TARGET.length, "\x00") #!
-$last_req      = "rzcglfrg" #! Last request string input by user
-$socket        = nil  # Permanent socket with the game
-$res           = nil  # Store outte's response, to forward to the game
-$count         = 1    # Proxied request counter
-$root_page     = 0    # Page that'll show at the top in-game
-$page          = 0    # Current page (different if we've scrolled down)
+$port_npp  = 8124 # Default port used to comunicate with the game
+$proxy     = "http://localhost:#{$port_npp}".ljust(TARGET.length, "\x00") #!
+$last_req  = ""   # Last request string input by user
+$socket    = nil  # Permanent socket with the game
+$res       = nil  # Store outte's response, to forward to the game
+$count     = 1    # Proxied request counter
+$root_page = 0    # Page that'll show at the top in-game
+$page      = 0    # Current page (different if we've scrolled down)
 
 # < ------------------------- Frontend constants ----------------------------- >
 
@@ -57,7 +57,7 @@ INITIAL_DATE     = Date.new(2015, 6, 2) # Date of first userlevel
 DATE_FORMAT      = "%d/%m/%Y"           #! Format for date filter in searches
 TIME_FORMAT_NPP  = "%Y-%m-%d-%H:%M"     #! Datetime format used by N++
 TIME_FORMAT_CUSE = "%d/%m/%Y %H:%M"     # Datetime format used by CUSE
-TIME_FORMAT_LOG  = "%H:%M:%S.%L"           # Time format for the log box
+TIME_FORMAT_LOG  = "%H:%M:%S.%L"        # Time format for the log box
 
 # Colors
 COLOR_LOG_NORMAL  = "#000"
@@ -68,6 +68,16 @@ COLOR_LOG_ERROR   = "#F00"
 
 $config  = {}
 $filters = {}
+$flags     = {
+  res: {
+    empty:          false,
+    invalid_format: false,
+    invalid_length: false,
+    invalid_type:   false,
+    invalid_mode:   false
+  }
+}
+
 
 ################################################################################
 #                                    UTILS                                     #
@@ -99,7 +109,11 @@ rescue
 end
 
 def to_utf8(str)
-  str.bytes.reject{ |b| b < 32 || b == 127 }.join.scrub('_')
+  str.bytes.reject{ |b| b < 32 || b == 127 }.map(&:chr).join.scrub('_')
+end
+
+def parse_str(str)
+  to_utf8(str.split("\x00")[0].to_s).strip
 end
 
 def parse_date(str)
@@ -251,10 +265,39 @@ end
 
 # TODO: Add more integrity checks (map count, block lengths, etc)
 def validate_res(res, pars)
-  return empty_query(pars) if !res.is_a?(String)
-  return empty_query(pars) if res.size < 48
-  return empty_query(pars) if _unpack(res[24...28]) != 0
-  return empty_query(pars) if _unpack(res[32...36]) != pars['mode'].to_i
+  # Response needs to be initialized
+  if res.nil?
+    $flags[:res][:empty] = true
+    log_flags(:res)
+    return empty_query(pars)
+  end
+
+  # Response needs to be a string
+  if !res.is_a?(String)
+    $flags[:res][:invalid_format] = true
+    log_flags(:res)
+    return empty_query(pars)
+  end
+
+  # Response needs to be at least 48 bytes, the size of an empty query
+  if res.size < 48
+    $flags[:res][:invalid_length] = true
+    log_flags(:res)
+    return empty_query(pars)
+  end
+
+  # Type needs to be 0 (level)
+  $flags[:res][:invalid_length] = true if _unpack(res[24...28]) != 0
+
+  # Mode (solo, coop, race) needs to match the game's
+  $flags[:res][:invalid_length] = true if _unpack(res[32...36]) != pars['mode'].to_i
+
+  if $flags[:res].values.count(true) > 0
+    log_flags(:res)
+    return empty_query(pars)
+  end 
+
+  # Set QT and page manually and return response
   cat = pars.key?('search') ? 36 : (pars['qt'] || 10).to_i
   page = (pars['page'] || 0).to_i
   res[20...24] = _pack(page, 4)
@@ -321,7 +364,12 @@ def server_call(req = $last_req)
     $res = read(conn, false)
     $last_req = req
     conn.close
-    $res.nil? ? Log.err('Connection to outte timed out') : Log.debug("Received #{$res.size} bytes from outte (#{time(t)})")
+    if $res.nil?
+      Log.err('Connection to outte timed out')
+    else
+      Log.debug("Received #{$res.size} bytes from outte (#{time(t)})")
+      LevelSet.new(nil, $res)
+    end
   end
 rescue => e
   log_exception('Unable to connect to outte', e)
@@ -331,7 +379,7 @@ end
 #                                   FRONTEND                                   #
 ################################################################################
 
-# < ---------------------------- File management ----------------------------- >
+# < ----------------------- File and flag management ------------------------- >
 
 def load_config(name = nil)
   # TODO: Actually load from config file here if it exists
@@ -398,6 +446,29 @@ def load_config(name = nil)
 end
 
 def save_config(name)
+end
+
+def log_flags(type)
+  return if !$flags.key?(type)
+  msg = $flags[type].map{ |f, v|
+    if !v
+      nil
+    else
+      case f
+      when :empty
+        'no search has been made yet'
+      when :invalid_format
+        'bad format'
+      when :invalid_length
+        'bad length'
+      when :invalid_type
+        'bad type'
+      when :invalid_mode
+        'bad mode'
+      end
+    end
+  }.compact.map(&:to_s)
+  Log.debug("Invalid response: #{msg.join(', ')}") if msg.size > 0
 end
 
 # < -------------------------------- Classes --------------------------------- >
@@ -827,11 +898,11 @@ class LevelSet
   @@tree      = nil # Tk::Tile::Treeview containing levels
   @@active    = nil # Currently active/visible instance of LevelSet
   @@sets      = []  # Array of instances
-  @@charwidth = 9   # Average font char size of elements
+  @@charwidth = 8   # Average font char size of elements
   @@minwidth  = 12   # Average font char size of headers
   @@fields    = {
     'id'     => { anchor: 'e', width: 7  },
-    'title'  => { anchor: 'w', width: 16 },
+    'title'  => { anchor: 'w', width: 24 },
     'author' => { anchor: 'w', width: 16 },
     'date'   => { anchor: 'w', width: 16 },
     '++'     => { anchor: 'e', width: 3  }
@@ -852,11 +923,13 @@ class LevelSet
   end
 
   def self.update_tree
-    @@tree.children.each(&:delete)
+    @@tree.children('').each(&:delete)
     return if @@active.nil?
     @@active.levels.each{ |l|
       @@tree.insert('', 'end', values: @@fields.keys.map{ |f| l[f] })
     }
+  rescue => e
+    log_exception("Failed to update userlevel list", e)
   end
 
   def initialize(search, raw)
@@ -876,6 +949,7 @@ class LevelSet
   def parse(raw)
     # Parse header
     return if raw.size < 48
+    Log.debug("Parsing header...")
     @header = {
       date:    parse_time(raw[0...16]),
       count:   _unpack(raw[16...20]),
@@ -889,18 +963,20 @@ class LevelSet
     }
 
     # Parse map headers
+    Log.debug("Parsing map headers...")
     return if raw.size < 48 + 44 * @header[:count]
-    @levels = raw[48 ... 48 + 44 * @header[:count]].bytes.each_slice(44).map { |h|
+    @levels = raw[48 ... 48 + 44 * @header[:count]].chars.each_slice(44).map { |h|
       {
         'id'        => _unpack(h[0...4], 'l<'),
-        'author_id' => _unpack(h[0...8], 'l<'),
-        'author'    => to_utf8(h[8...24].split("\x00")[0]).strip,
+        'author_id' => _unpack(h[4...8], 'l<'),
+        'author'    => parse_str(h[8...24].join),
         '++'        => _unpack(h[24...28], 'l<'),
-        'date'      => parse_time(h[28..-1])
+        'date'      => format_time(parse_time(h[28..-1].join))
       }
     }
 
     # Parse map data
+    Log.debug("Parsing map data...")
     i = 0
     offset = 48 + 44 * @header[:count]
     while i < @header[:count]
@@ -909,12 +985,16 @@ class LevelSet
       @levels[i]['count'] = _unpack(raw[offset + 4...offset + 6])
       break if raw.size < offset + len
       map = Zlib::Inflate.inflate(raw[offset + 6...offset + len])
-      @levels[i]['title'] = to_utf8(map[30...158].split("\x00")[0]).strip
+      @levels[i]['title'] = parse_str(map[30...158])
       @levels[i]['tiles'] = map[176...1142].bytes.each_slice(42).to_a
       @levels[i]['objects'] = map[1222..-1].bytes.each_slice(5).to_a
       offset += len
       i += 1
     end
+
+    Log.info("Received #{@header[:count]} maps")
+  rescue => e
+    log_exception("Failed to parse userlevels", e)
   end
 end # End LevelSet
 
@@ -1031,7 +1111,7 @@ end
 # when clicking outside of them.
 def defocus(event)
   focused = Tk.focus
-  return nil if focused == $root
+  return nil if focused.nil? || focused == $root
   x1 = focused.winfo_rootx
   x2 = focused.winfo_rootx + focused.winfo_width
   y1 = focused.winfo_rooty
