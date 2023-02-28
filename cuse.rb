@@ -132,6 +132,14 @@ def format_time(time)
   time.strftime(TIME_FORMAT_CUSE)
 end
 
+def escape(str)
+  str.dump[1..-2]
+end
+
+def unescape(str)
+  "\"#{str}\"".undump
+end
+
 ################################################################################
 #                                   BACKEND                                    #
 ################################################################################
@@ -368,7 +376,7 @@ def server_call(req = $last_req)
       Log.err('Connection to outte timed out')
     else
       Log.debug("Received #{$res.size} bytes from outte (#{time(t)})")
-      LevelSet.new(nil, $res)
+      LevelSet.new(req, $res)
     end
   end
 rescue => e
@@ -511,6 +519,7 @@ class Tooltip
   def leave  
     @label.place_forget
     @label = nil
+  rescue
   end
 end # End Tooltip
 
@@ -658,6 +667,10 @@ class Search
 
   def self.execute
     Filter.validate
+    srch = Filter.list.select{ |name, filter| filter.state }.map{ |name, filter|
+      "#{name.downcase} \"#{escape(filter.value)}\""
+    }.join(' ')
+    server_call(srch)
   end
 
   def initialize(name, filters, states, hidden = false, deletable = true)

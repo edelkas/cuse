@@ -1,19 +1,24 @@
 TODO:
 
 Backend:
-- Create cache system, storing userlevel files in a big binary / memory, using a
-  hash encoding all search query terms to determine if that query is cached or not.
-  Store date of cache blocks to allow for expiring of old blocks.
+- Create cache system:
+    * Store every requested LevelSet in memory, with all info regarding the filters
+      used for it, so we know when we have something cached.
+    * Keep track of date, to make the LevelSets expire if they haven't been accessed
+      in a while.
+    * Keep track of amount of slots, and perhaps more importantly, of total memory
+      usage by the cache, and put a limit on them.
+    * Add a button in the interface to clean the cache manually, useful for
+      browsing the newest userlevels.
+    * Optimization idea: On the first outte request, only return userlevel IDs.
+      Then, CUSE requests the map data only for those userlevels that aren't cached
+      yet.
 - Make program check Github regularly for new versions, possibly even auto-update.
 - Allow for regex searches.
 - Have config file: default date format, default filter values.
 - Multiple config profiles?
 - Save latest state (tabs, searches...) when closing, and load them at the start.
-- Optimization: Requests to outte only return the level IDs, and then the program
-  makes a 2nd request for the map data of those maps that aren't cached yet.
 - Allow to save/load level sets (not all, just visible ones).
-- Option to manually erase cache, so that the search gets performed again for
-  cached pages.
 
 Frontend:
 - N++ button should perhaps be a double state one (active/deactivate proxying),
@@ -22,6 +27,10 @@ Frontend:
   can be maintained simultaneously. Keep everything (filters, userlevels, paging...)
   in memory. Also, move page navigation to this part, and add button to add/remove
   tabs, invidually and globally.
+- Add buttons to navigate all executed searches (they're all in memory). This should
+  be independent for each tab, and contain all searches that have been executed from
+  that tab (obviously, only one search for each combination of filters, not for each
+  page, we should remember the last page each search was at).
 - As an alternative, have a CLI + Enter option to execute searches.
 - Help tooltips for filters and others
 - RadioButton to toggle between in-game or in-program pagination, since both
@@ -43,8 +52,14 @@ Outte:
   perhaps by adding new fields to Userlevel table for quickness. For date ranges,
   add aux functions to convert date into ID, and then just find the intersection of
   the date and ID ranges (if provided). ID is indexed, so this should be fast.
-- Look into caching searches (before cropping the full list), so that page browsing
-  (which makes a new query to outte) is quick. Look into expiring 
+- Create cache system:
+    * Cache only the list of userlevel IDs resulting from a specific search, by
+      keeping track of all search filters used, so that we know when a certain
+      search is cached or not.
+    * Limit the cache by keeping track of:
+        - The date, to let them expire.
+        - The amount of cached searches.
+        - Most importantly, the total memory usage of the cache.
 - Create new field in UserlevelData table of outte's db to contain the Zlibbed block
   and header, ready to be dumped in the final file, for efficiency.
 
