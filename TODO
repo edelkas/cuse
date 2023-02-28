@@ -1,13 +1,10 @@
 TODO:
 
+- Solve todo's specified in the source file.
+
 Backend:
 - Create cache system:
-    * Store every requested LevelSet in memory, with all info regarding the filters
-      used for it, so we know when we have something cached.
-    * Keep track of date, to make the LevelSets expire if they haven't been accessed
-      in a while.
-    * Keep track of amount of slots, and perhaps more importantly, of total memory
-      usage by the cache, and put a limit on them.
+    * Implement cache expiring (thread?), test thoroughly.
     * Add a button in the interface to clean the cache manually, useful for
       browsing the newest userlevels.
     * Optimization idea: On the first outte request, only return userlevel IDs.

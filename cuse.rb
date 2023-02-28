@@ -1,5 +1,7 @@
 require 'byebug'
 require 'date'
+require 'digest'
+require 'json'
 require 'net/http'
 require 'socket'  
 require 'tk'
@@ -138,6 +140,24 @@ end
 
 def unescape(str)
   "\"#{str}\"".undump
+end
+
+def bench(action)
+  @t ||= Time.now
+  @total ||= 0
+  @step ||= 0
+  case action
+  when :start
+    @step = 0
+    @total = 0
+    @t = Time.now
+  when :step
+    @step += 1
+    int = Time.now - @t
+    @total += int
+    @t = Time.now
+    puts ("Benchmark #{@step}: #{"%.3fms" % (int * 1000)} (Total: #{"%.3fms" % (@total * 1000)}).")
+  end
 end
 
 ################################################################################
@@ -369,15 +389,15 @@ def server_call(req = $last_req)
     conn.write(msg)
     conn.close_write
     Log.debug("Waiting for outte...")
-    $res = read(conn, false)
+    res = read(conn, false)
     $last_req = req
     conn.close
-    if $res.nil?
+    if res.nil?
       Log.err('Connection to outte timed out')
     else
       Log.debug("Received #{$res.size} bytes from outte (#{time(t)})")
-      LevelSet.new(req, $res)
     end
+    return res
   end
 rescue => e
   log_exception('Unable to connect to outte', e)
@@ -665,12 +685,25 @@ class Search
     @@entry.value = name
   end
 
+  # The 'key' is a string that uniquely identifies the search, for properly
+  # caching the results
   def self.execute
     Filter.validate
-    srch = Filter.list.select{ |name, filter| filter.state }.map{ |name, filter|
-      "#{name.downcase} \"#{escape(filter.value)}\""
-    }.join(' ')
-    server_call(srch)
+    filters = Filter.list.select{ |name, filter| filter.state }.map{ |name, filter|
+      [name, filter.value.downcase]
+    }
+    key = filters.to_json
+    slot = Cache.get(key)
+    if slot.nil?
+      srch = filters.map{ |name, filter|
+        "#{name.downcase} \"#{escape(filter)}\""
+      }.join(' ')
+      res = server_call(srch)
+      LevelSet.new(key, res) if !res.nil?
+    else
+      Log.debug("Found cached block of #{slot.size} levels.")
+      slot.select
+    end
   end
 
   def initialize(name, filters, states, hidden = false, deletable = true)
@@ -911,9 +944,8 @@ class LevelSet
 
   @@tree      = nil # Tk::Tile::Treeview containing levels
   @@active    = nil # Currently active/visible instance of LevelSet
-  @@sets      = []  # Array of instances
   @@charwidth = 8   # Average font char size of elements
-  @@minwidth  = 12   # Average font char size of headers
+  @@minwidth  = 12  # Average font char size of headers
   @@fields    = {
     'id'     => { anchor: 'e', width: 7  },
     'title'  => { anchor: 'w', width: 24 },
@@ -946,18 +978,39 @@ class LevelSet
     log_exception("Failed to update userlevel list", e)
   end
 
-  def initialize(search, raw)
-    @search = search
+  def initialize(key, raw)
+    @key = key
     @header = {}
     @levels = []
     parse(raw)
-    @@sets << self
-    activate
+    cache
+    select
+  end
+
+  def cache
+    Cache.add(@key, self)
+  end
+
+  def size
+    @levels.size
+  end
+
+  def select
+    @@active = self
     self.class.update_tree
   end
 
-  def activate
-    @@active = self
+  # TODO: Implement dumping the binary and sending to the game (probably by
+  # setting a global var)
+  def dump
+
+  end
+
+  # This will be called by the Cache when the block gets deleted
+  def destroy
+    @terms = nil
+    @header = nil
+    @levels = nil
   end
 
   def parse(raw)
@@ -1011,6 +1064,70 @@ class LevelSet
     log_exception("Failed to parse userlevels", e)
   end
 end # End LevelSet
+
+# TODO: - Add function to make cache blocks expire after a while (and var
+#         to control long they should last).
+#       - Test what happens when the limit is reached, and also, when they expire
+class Cache
+  @@slots = {}
+  @@limit = 1024 # Slot limit (TODO: Make this a constant)
+
+  # Set time of cache block to current
+  def self.update_time(hash)
+    slot = @@slots[hash]
+    return false if slot.nil?
+    slot[:time] = Time.now.to_i
+  end
+
+  # Retrieve a cached block
+  def self.get(key)
+    slot = @@slots.find{ |_, block| block[:key] == key }
+    return nil if slot.nil?
+    update_time(slot[0])
+    return slot[1][:data]
+  end
+
+  # Free up n slots in the cache
+  def self.free(n = 1)
+    @@slots.min_by(n){ |hash, block| block[:time] }.each{ |hash, block|
+      delete(hash)
+    }
+  end
+
+  def self.add(key, obj)
+    hash = hash(key)
+    block = @@slots[hash]
+    # If block is in cache, update date and return false
+    if !block.nil?
+      update_time(hash)
+      return false
+    end
+    # If block is not in cache, create it (making sure there's space) and return true
+    free(@@slots.size - @@limit + 1) if @@slots.size >= @@limit
+    @@slots[hash] = {
+      key:  key,
+      data: obj,
+      time: Time.now.to_i
+    }
+    return true
+  end
+
+  def self.delete(hash)
+    block = @@slots[hash]
+    return false if block.nil?
+    block[:data].destroy
+    @@slots[hash] = nil
+    @@slots.delete(hash)
+  end
+
+  def self.hash(key)
+    Digest::MD5.digest(key)
+  end
+end # End Cache
+
+class Tab
+  
+end # End Tab
 
 class Log
   @@log    = nil # TkText widget to store the info
