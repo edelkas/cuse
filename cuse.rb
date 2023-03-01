@@ -1139,13 +1139,25 @@ class Tab
     @@notebook = Tk::Tile::Notebook.new(@@frame).grid(row: 0, column: 0, sticky: 'ew')
     @@notebook.bind("<NotebookTabChanged>"){ update_tree }
     Tab.open
+    @@frame2 = TkFrame.new(@@frame).grid(row: 1, column: 0, sticky: 'ew')
+    # TODO: The following is missing labels and text entries
+    Button.new(@@frame2, 'icons/new.gif',        0, 0, 'New tab',         -> { Tab.open })
+    Button.new(@@frame2, 'icons/delete.gif',     0, 1, 'Close tab',       -> { Tab.close })
+    Button.new(@@frame2, 'icons/first_b.gif',    0, 2, 'First search',    -> { })
+    Button.new(@@frame2, 'icons/previous_b.gif', 0, 3, 'Previous search', -> { })
+    Button.new(@@frame2, 'icons/next_b.gif',     0, 4, 'Next search',     -> { })
+    Button.new(@@frame2, 'icons/last_b.gif',     0, 5, 'Last search',     -> { })
+    Button.new(@@frame2, 'icons/first.gif',      0, 6, 'First page',      -> { })
+    Button.new(@@frame2, 'icons/previous.gif',   0, 7, 'Previous page',   -> { })
+    Button.new(@@frame2, 'icons/next.gif',       0, 8, 'Next page',       -> { })
+    Button.new(@@frame2, 'icons/last.gif',       0, 9, 'Last page',       -> { })
     @@tree = TkTreeview.new(
       @@frame,
       selectmode: 'browse',
       height:     25,
       columns:    @@fields.keys.join(' '),
       show:       'headings'
-    ).grid(row: 1, column: 0, sticky: 'news')
+    ).grid(row: 2, column: 0, sticky: 'news')
     @@fields.each{ |name, attr|
       @@tree.column_configure(name, anchor: attr[:anchor], minwidth: name.length * @@minwidth, width: attr[:width] * @@charwidth)
       @@tree.heading_configure(name, text: name.capitalize)
@@ -1403,14 +1415,7 @@ Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ Search.execute })
 Button.new(fButtons, 'icons/npp.gif',    0, 4, 'Play',   ->{ })
 Search.draw(fSearch, 2, 0)
 
-# Navigation
-fButtons2 = TkFrame.new(fSearch).grid(row: 3, column: 0, sticky: 'w')
-Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
-Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
-Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { Tab.open })
-Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { Tab.close })
-
-# Levels
+# Level view
 Tab.init(fLevels, 0, 0)
 
 # Log

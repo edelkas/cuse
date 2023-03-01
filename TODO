@@ -9,6 +9,9 @@ Backend:
     * Optimization idea: On the first outte request, only return userlevel IDs.
       Then, CUSE requests the map data only for those userlevels that aren't cached
       yet.
+- Figure out the connection between the cache and the tab's history, e.g., what
+  happens when a cache block expires? We must delete it from the history, unless
+  it's currently visible or something.
 - Make program check Github regularly for new versions, possibly even auto-update.
 - Allow for regex searches.
 - Have config file: default date format, default filter values.
@@ -19,10 +22,6 @@ Backend:
 Frontend:
 - N++ button should perhaps be a double state one (active/deactivate proxying),
   have two versions of the icon for this (red/green?)
-- Add tabs to the userlevel result table, so that multiple searches and result sets
-  can be maintained simultaneously. Keep everything (filters, userlevels, paging...)
-  in memory. Also, move page navigation to this part, and add button to add/remove
-  tabs, invidually and globally.
 - Add buttons to navigate all executed searches (they're all in memory). This should
   be independent for each tab, and contain all searches that have been executed from
   that tab (obviously, only one search for each combination of filters, not for each
