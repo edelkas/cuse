@@ -4,7 +4,6 @@ TODO:
 
 Backend:
 - Create cache system:
-    * Implement cache expiring (thread?), test thoroughly.
     * Add a button in the interface to clean the cache manually, useful for
       browsing the newest userlevels.
     * Optimization idea: On the first outte request, only return userlevel IDs.

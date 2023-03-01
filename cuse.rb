@@ -40,6 +40,11 @@ PORT_OUTTE    = 8125 #! Default port used to comunicate with outte
 TIMEOUT_NPP   = 0.25 # Time to wait for the game (local, so quick)
 TIMEOUT_OUTTE = 5    # Time to wait for outte (not local, so long)
 
+CACHE_SIZE    = 1024        # Number of cache slots
+CACHE_TIMEOUT = 2 * 60 * 60 # Cache expire duration
+
+BACKGROUND_LOOP = 5 # Check background tasks every 5 mins
+
 # < ------------------------- Backend variables ------------------------------ >
 
 $port_npp  = 8124 # Default port used to comunicate with the game
@@ -163,6 +168,16 @@ end
 ################################################################################
 #                                   BACKEND                                    #
 ################################################################################
+
+def background_tasks
+  while true
+    sleep(BACKGROUND_LOOP)
+    Cache.expire
+  end
+rescue
+  sleep(5)
+  retry
+end
 
 # < -------------------------- File management ------------------------------- >
 
@@ -395,7 +410,7 @@ def server_call(req = $last_req)
     if res.nil?
       Log.err('Connection to outte timed out')
     else
-      Log.debug("Received #{$res.size} bytes from outte (#{time(t)})")
+      Log.debug("Received #{res.size} bytes from outte (#{time(t)})")
     end
     return res
   end
@@ -699,11 +714,12 @@ class Search
         "#{name.downcase} \"#{escape(filter)}\""
       }.join(' ')
       res = server_call(srch)
-      LevelSet.new(key, res) if !res.nil?
+      level_set = !res.nil? ? LevelSet.new(key, res) : nil
     else
       Log.debug("Found cached block of #{slot.size} levels.")
-      slot.select
+      level_set = slot
     end
+    Tab.add(level_set)
   end
 
   def initialize(name, filters, states, hidden = false, deletable = true)
@@ -942,49 +958,12 @@ end # End Filter
 class LevelSet
   attr_reader :levels
 
-  @@tree      = nil # Tk::Tile::Treeview containing levels
-  @@active    = nil # Currently active/visible instance of LevelSet
-  @@charwidth = 8   # Average font char size of elements
-  @@minwidth  = 12  # Average font char size of headers
-  @@fields    = {
-    'id'     => { anchor: 'e', width: 7  },
-    'title'  => { anchor: 'w', width: 24 },
-    'author' => { anchor: 'w', width: 16 },
-    'date'   => { anchor: 'w', width: 16 },
-    '++'     => { anchor: 'e', width: 3  }
-  }
-
-  def self.init(frame, row, col)
-    @@tree = TkTreeview.new(
-      frame,
-      selectmode: 'browse',
-      height:     25,
-      columns:    @@fields.keys.join(' '),
-      show:       'headings'
-    ).grid(row: row, column: col, sticky: 'news')
-    @@fields.each{ |name, attr|
-      @@tree.column_configure(name, anchor: attr[:anchor], minwidth: name.length * @@minwidth, width: attr[:width] * @@charwidth)
-      @@tree.heading_configure(name, text: name.capitalize)
-    }
-  end
-
-  def self.update_tree
-    @@tree.children('').each(&:delete)
-    return if @@active.nil?
-    @@active.levels.each{ |l|
-      @@tree.insert('', 'end', values: @@fields.keys.map{ |f| l[f] })
-    }
-  rescue => e
-    log_exception("Failed to update userlevel list", e)
-  end
-
   def initialize(key, raw)
     @key = key
     @header = {}
     @levels = []
     parse(raw)
     cache
-    select
   end
 
   def cache
@@ -993,11 +972,6 @@ class LevelSet
 
   def size
     @levels.size
-  end
-
-  def select
-    @@active = self
-    self.class.update_tree
   end
 
   # TODO: Implement dumping the binary and sending to the game (probably by
@@ -1059,24 +1033,22 @@ class LevelSet
       i += 1
     end
 
-    Log.info("Received #{@header[:count]} maps")
+    Log.info("Downloaded #{@header[:count]} maps")
   rescue => e
     log_exception("Failed to parse userlevels", e)
   end
 end # End LevelSet
 
-# TODO: - Add function to make cache blocks expire after a while (and var
-#         to control long they should last).
-#       - Test what happens when the limit is reached, and also, when they expire
 class Cache
-  @@slots = {}
-  @@limit = 1024 # Slot limit (TODO: Make this a constant)
+  @@slots = {} # Cache blocks
+  @@index = 0  # Cache block counter
 
   # Set time of cache block to current
   def self.update_time(hash)
     slot = @@slots[hash]
     return false if slot.nil?
     slot[:time] = Time.now.to_i
+    return true
   end
 
   # Retrieve a cached block
@@ -1089,11 +1061,24 @@ class Cache
 
   # Free up n slots in the cache
   def self.free(n = 1)
-    @@slots.min_by(n){ |hash, block| block[:time] }.each{ |hash, block|
+    @@slots.min_by(n){ |_, block| block[:time] }.each{ |hash, block|
       delete(hash)
     }
   end
 
+  # Delete expired slots
+  def self.expire
+    @@slots.select{ |_, block| Time.now.to_i - block[:time] >= CACHE_TIMEOUT }
+           .each{ |hash, _| delete(hash) }
+  end
+
+  # Empty entire cache
+  def self.clear
+    @@slots.each{ |hash, _| delete(hash) }
+    Log.debug("Cache cleared")
+  end
+
+  # Add a block of levels to the cache
   def self.add(key, obj)
     hash = hash(key)
     block = @@slots[hash]
@@ -1103,30 +1088,159 @@ class Cache
       return false
     end
     # If block is not in cache, create it (making sure there's space) and return true
-    free(@@slots.size - @@limit + 1) if @@slots.size >= @@limit
+    free(@@slots.size - CACHE_SIZE + 1) if @@slots.size >= CACHE_SIZE
     @@slots[hash] = {
-      key:  key,
-      data: obj,
-      time: Time.now.to_i
+      index: @@index,
+      key:   key,
+      data:  obj,
+      time:  Time.now.to_i
     }
+    Log.trace("Added block #{@@index} to cache.")
+    @@index += 1
     return true
   end
 
+  # Delete a cache block, invoking also the corresponding destructor
   def self.delete(hash)
     block = @@slots[hash]
     return false if block.nil?
     block[:data].destroy
+    Log.trace("Deleted block #{block[:index]} from cache.")
     @@slots[hash] = nil
     @@slots.delete(hash)
+    return true
   end
 
+  # Compute hash of a string to use as key for the associative array
   def self.hash(key)
     Digest::MD5.digest(key)
   end
 end # End Cache
 
 class Tab
-  
+  @@tabs      = {}  # Array of tabs
+  @@index     = 0   # Tab counter
+  @frame      = nil # Frame to contain widgets
+  @@tree      = nil # Tk::Tile::Treeview containing levels
+  @@active    = nil # Currently active/visible instance of LevelSet
+  @@charwidth = 8   # Average font char size of elements
+  @@minwidth  = 12  # Average font char size of headers
+  @@fields    = {
+    'id'     => { anchor: 'e', width: 7  },
+    'title'  => { anchor: 'w', width: 24 },
+    'author' => { anchor: 'w', width: 16 },
+    'date'   => { anchor: 'w', width: 16 },
+    '++'     => { anchor: 'e', width: 3  }
+  }
+
+  def self.init(frame, row, col)
+    @@frame = TkFrame.new(frame).grid(row: row, column: col, sticky: 'news')
+    @@frame.grid_columnconfigure(0, weight: 1)
+    @@notebook = Tk::Tile::Notebook.new(@@frame).grid(row: 0, column: 0, sticky: 'ew')
+    @@notebook.bind("<NotebookTabChanged>"){ update_tree }
+    Tab.open
+    @@tree = TkTreeview.new(
+      @@frame,
+      selectmode: 'browse',
+      height:     25,
+      columns:    @@fields.keys.join(' '),
+      show:       'headings'
+    ).grid(row: 1, column: 0, sticky: 'news')
+    @@fields.each{ |name, attr|
+      @@tree.column_configure(name, anchor: attr[:anchor], minwidth: name.length * @@minwidth, width: attr[:width] * @@charwidth)
+      @@tree.heading_configure(name, text: name.capitalize)
+    }
+  end
+
+  # Update userlevel info table
+  # Parameter is the index of the LevelSet in the selected tab's history
+  # If nil, last search will be picked.
+  def self.update_tree
+    @@tree.children('').each(&:delete)
+    tab = active
+    return if tab.nil?
+    level_set = tab.level_set
+    return if level_set.nil?
+    level_set.levels.each{ |l|
+      @@tree.insert('', 'end', values: @@fields.keys.map{ |f| l[f] })
+    }
+    $root.update # Update app display
+  rescue => e
+    log_exception("Failed to update userlevel list", e)
+  end
+
+  # Add a new LevelSet to the current active tab
+  def self.add(level_set)
+    tab = active
+    tab = Tab.open if tab.nil?
+    tab.add(level_set)
+  rescue => e
+    log_exception("Failed to add search to tab", e)
+  end
+
+  # Open a new tab and set as active
+  def self.open
+    @@index += 1
+    @@notebook.add(TkFrame.new, text: "Tab #{@@index}")
+    @@notebook.select(@@notebook.index('end') - 1)
+    Log.trace("Opened tab #{@@index}")
+    @@tabs[@@index] = Tab.new(@@index)    
+  rescue => e
+    Log.err("Failed to open tab", e)
+  end
+
+  # Close the current active tab
+  def self.close
+    tab = active
+    if tab.nil?
+      Log.warn("No tabs to close")
+      return false
+    end
+    tab.destroy
+  end
+
+  def self.active_id
+    @@notebook.index('current')
+  rescue
+    -1
+  end
+
+  def self.active
+    id = active_id
+    return nil if id == -1
+    @@tabs[@@notebook.itemcget(id, :text)[/\d+/].to_i]
+  end
+
+  def initialize(index)
+    @history = []    # Searches performed in this tab
+    @pos     = 0     # Selected search from this tab
+    @index   = index # Global index of the tab
+  end
+
+  def select(index)
+    @pos = index
+    self.class.update_tree
+  end
+
+  def add(level_set)
+    @history << level_set
+    select(@history.size - 1)
+  end
+
+  def level_set
+    @history[@pos]
+  end
+
+  # Note that we do NOT destroy the underlying LevelSets, they remained cached for later
+  def destroy
+    i = @index
+    @@tabs.delete(@index)
+    @@notebook.forget(self.class.active_id)
+    self.class.update_tree
+    Log.trace("Closed tab #{i}")
+  rescue => e
+    log_exception("Failed to close tab", e)
+  end
 end # End Tab
 
 class Log
@@ -1293,11 +1407,11 @@ Search.draw(fSearch, 2, 0)
 fButtons2 = TkFrame.new(fSearch).grid(row: 3, column: 0, sticky: 'w')
 Button.new(fButtons2, 'icons/first.gif',    0, 0, 'First',    -> { })
 Button.new(fButtons2, 'icons/previous.gif', 0, 1, 'Previous', -> { })
-Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { server_call })
-Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { })
+Button.new(fButtons2, 'icons/next.gif',     0, 2, 'Next',     -> { Tab.open })
+Button.new(fButtons2, 'icons/last.gif',     0, 3, 'Last',     -> { Tab.close })
 
 # Levels
-LevelSet.init(fLevels, 0, 0)
+Tab.init(fLevels, 0, 0)
 
 # Log
 Log.init(fLevels, 1, 0)
@@ -1311,5 +1425,6 @@ trap 'INT' do destroy end
 server_startup
 threads = {}
 threads[:server] = Thread.new{ server_loop while true }
+threads[:background] = Thread.new{ background_tasks while true }
 #threads[:input] = Thread.new{ server_call(STDIN.gets.chomp) while true } # CLI remain
 Tk.mainloop
