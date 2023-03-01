@@ -20,6 +20,8 @@ Backend:
 - Allow to save/load level sets (not all, just visible ones).
 
 Frontend:
+- Have special, undeletable tabs at the end for adding (+) and removing (x) tabs.
+  Add tooltip for these.
 - N++ button should perhaps be a double state one (active/deactivate proxying),
   have two versions of the icon for this (red/green?)
 - Add buttons to navigate all executed searches (they're all in memory). This should
