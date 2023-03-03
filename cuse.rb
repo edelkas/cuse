@@ -982,7 +982,7 @@ class LevelSet
 
   # This will be called by the Cache when the block gets deleted
   def destroy
-    @terms = nil
+    @key = nil
     @header = nil
     @levels = nil
   end
@@ -1117,12 +1117,19 @@ class Cache
   end
 end # End Cache
 
+# TODO: What happens when LevelSets expire? Make sure that when navigating
+# tabs, and searches within tabs, we account for expired searches, such that
+# if one is expired, we just reexecute it again, and perhaps store it where
+# it originally was, without creating a new search slot at the end of the
+# tab's history.
 class Tab
+  attr_reader :index
+
   @@tabs      = {}  # Array of tabs
   @@index     = 0   # Tab counter
   @frame      = nil # Frame to contain widgets
   @@tree      = nil # Tk::Tile::Treeview containing levels
-  @@active    = nil # Currently active/visible instance of LevelSet
+  @@active    = nil # Currently active tab
   @@charwidth = 8   # Average font char size of elements
   @@minwidth  = 12  # Average font char size of headers
   @@fields    = {
@@ -1132,25 +1139,29 @@ class Tab
     'date'   => { anchor: 'w', width: 16 },
     '++'     => { anchor: 'e', width: 3  }
   }
+  @@special_tabs = {
+    open:  '+',  # Text of tab to open another tab
+    close: 'x'   # Text of tab to close the active tab
+  }
 
   def self.init(frame, row, col)
     @@frame = TkFrame.new(frame).grid(row: row, column: col, sticky: 'news')
     @@frame.grid_columnconfigure(0, weight: 1)
     @@notebook = Tk::Tile::Notebook.new(@@frame).grid(row: 0, column: 0, sticky: 'ew')
-    @@notebook.bind("<NotebookTabChanged>"){ update_tree }
-    Tab.open
+    # TODO: Add tooltips to the special tabs
+    @@notebook.add(TkFrame.new, text: @@special_tabs[:open])
+    @@notebook.add(TkFrame.new, text: @@special_tabs[:close])
+    @@notebook.bind("<NotebookTabChanged>"){ update }
     @@frame2 = TkFrame.new(@@frame).grid(row: 1, column: 0, sticky: 'ew')
     # TODO: The following is missing labels and text entries
-    Button.new(@@frame2, 'icons/new.gif',        0, 0, 'New tab',         -> { Tab.open })
-    Button.new(@@frame2, 'icons/delete.gif',     0, 1, 'Close tab',       -> { Tab.close })
-    Button.new(@@frame2, 'icons/first_b.gif',    0, 2, 'First search',    -> { })
-    Button.new(@@frame2, 'icons/previous_b.gif', 0, 3, 'Previous search', -> { })
-    Button.new(@@frame2, 'icons/next_b.gif',     0, 4, 'Next search',     -> { })
-    Button.new(@@frame2, 'icons/last_b.gif',     0, 5, 'Last search',     -> { })
-    Button.new(@@frame2, 'icons/first.gif',      0, 6, 'First page',      -> { })
-    Button.new(@@frame2, 'icons/previous.gif',   0, 7, 'Previous page',   -> { })
-    Button.new(@@frame2, 'icons/next.gif',       0, 8, 'Next page',       -> { })
-    Button.new(@@frame2, 'icons/last.gif',       0, 9, 'Last page',       -> { })
+    Button.new(@@frame2, 'icons/first_b.gif',    0, 0, 'First search',    -> { Tab.first_search })
+    Button.new(@@frame2, 'icons/previous_b.gif', 0, 1, 'Previous search', -> { Tab.prev_search })
+    Button.new(@@frame2, 'icons/next_b.gif',     0, 2, 'Next search',     -> { Tab.next_search })
+    Button.new(@@frame2, 'icons/last_b.gif',     0, 3, 'Last search',     -> { Tab.last_search })
+    Button.new(@@frame2, 'icons/first.gif',      0, 4, 'First page',      -> { })
+    Button.new(@@frame2, 'icons/previous.gif',   0, 5, 'Previous page',   -> { })
+    Button.new(@@frame2, 'icons/next.gif',       0, 6, 'Next page',       -> { })
+    Button.new(@@frame2, 'icons/last.gif',       0, 7, 'Last page',       -> { })
     @@tree = TkTreeview.new(
       @@frame,
       selectmode: 'browse',
@@ -1164,14 +1175,31 @@ class Tab
     }
   end
 
+  # Called whenever the active tab changes.
+  # If a special tab (open/close) is clicked, we act accordingly.
+  # If a normal tab is clicked, we update the userlevel table, and the
+  #   variable holding the active tab.
+  def self.update
+    name = active_name
+    return nil if name == ''
+    case name
+    when @@special_tabs[:open]
+      open
+    when @@special_tabs[:close]
+      close
+    else
+      @@active = active
+      update_tree
+    end
+  end
+
   # Update userlevel info table
   # Parameter is the index of the LevelSet in the selected tab's history
   # If nil, last search will be picked.
   def self.update_tree
     @@tree.children('').each(&:delete)
-    tab = active
-    return if tab.nil?
-    level_set = tab.level_set
+    return if @@active.nil?
+    level_set = @@active.level_set
     return if level_set.nil?
     level_set.levels.each{ |l|
       @@tree.insert('', 'end', values: @@fields.keys.map{ |f| l[f] })
@@ -1181,8 +1209,31 @@ class Tab
     log_exception("Failed to update userlevel list", e)
   end
 
+  def self.active_id
+    @@notebook.index('current')
+  rescue
+    -1
+  end
+
+  def self.active_name
+    id = active_id
+    return '' if id == -1
+    @@notebook.itemcget(id, :text)
+  rescue
+    ''
+  end
+
+  def self.active
+    name = active_name
+    return nil if name == '' || @@special_tabs.values.include?(name)
+    @@tabs[name[/\d+/].to_i]
+  rescue
+    nil
+  end
+
   # Add a new LevelSet to the current active tab
   def self.add(level_set)
+    return if level_set.nil?
     tab = active
     tab = Tab.open if tab.nil?
     tab.add(level_set)
@@ -1193,51 +1244,136 @@ class Tab
   # Open a new tab and set as active
   def self.open
     @@index += 1
-    @@notebook.add(TkFrame.new, text: "Tab #{@@index}")
-    @@notebook.select(@@notebook.index('end') - 1)
+    name = "Tab #{@@index}"
+    @@notebook.add(TkFrame.new, text: name)
+    @@tabs[@@index] = Tab.new(@@index, name)
     Log.trace("Opened tab #{@@index}")
-    @@tabs[@@index] = Tab.new(@@index)    
+    @@tabs[@@index].select # Keep this line last, so that the tab is returned
   rescue => e
     Log.err("Failed to open tab", e)
   end
 
   # Close the current active tab
   def self.close
-    tab = active
-    if tab.nil?
-      Log.warn("No tabs to close")
-      return false
-    end
-    tab.destroy
+    return if @@active.nil?
+    new_tab = @@active.next_tab(false) || @@active.prev_tab(false)
+    @@active.destroy
+    !new_tab.nil? ? new_tab.select : empty
   end
 
-  def self.active_id
-    @@notebook.index('current')
+  def self.first_search
+    return if @@active.nil?
+    @@active.first_search
+  end
+
+  def self.prev_search
+    return if @@active.nil?
+    @@active.prev_search
+  end
+
+  def self.next_search
+    return if @@active.nil?
+    @@active.next_search
+  end
+
+  def self.last_search
+    return if @@active.nil?
+    @@active.last_search
+  end
+
+  def self.empty
+    @@active = nil
+    update_tree
+  end
+
+  def initialize(index, name)
+    @history = []    # Searches performed in this tab
+    @pos     = -1    # Selected search from this tab
+    @index   = index # Index of the tab (CUSE)
+    @name    = name  # Label of the tab
+  end
+
+  # Find the Tk ID of the tab by its name
+  def get_id
+    @@notebook.index('end').times.each{ |i|
+      return i if @@notebook.itemcget(i, :text) == @name
+    }
+    return -1
   rescue
     -1
   end
 
-  def self.active
-    id = active_id
+  def select
+    id = get_id
     return nil if id == -1
-    @@tabs[@@notebook.itemcget(id, :text)[/\d+/].to_i]
+    @@notebook.select(id)
+    @@active = self
+    self.class.update_tree
+    self
+  rescue
+    nil
   end
 
-  def initialize(index)
-    @history = []    # Searches performed in this tab
-    @pos     = 0     # Selected search from this tab
-    @index   = index # Global index of the tab
+  # Navigate from one tab to another based on an ID offset
+  # If we don't clamp, then nil is returned when the tab doesn't exist,
+  # otherwise an actual tab should always be returned, even if it's the same one
+  def nav_tab(offset = 0, clamp = true)
+    id = get_id
+    return nil if id == -1
+    new_id = id + offset
+    new_id = new_id.clamp(0, @@notebook.index('end') - 1) if clamp
+    new_id = @@notebook.index(new_id) rescue -1
+    return nil if new_id == -1
+    @@tabs.find{ |_, tab| tab.get_id == new_id }[1]
+  rescue
+    nil
   end
 
-  def select(index)
+  def next_tab(clamp = true)
+    nav_tab(1, clamp)
+  end
+
+  def prev_tab(clamp = true)
+    nav_tab(-1, clamp)
+  end
+
+  def select_search(index)
+    return nil if !index.between?(0, @history.size - 1)
     @pos = index
     self.class.update_tree
+  rescue
+    nil
+  end
+
+  def nav_search(offset = 0)
+    select_search((@pos + offset).clamp(0, @history.size - 1))
+  end
+
+  def first_search
+    select_search(0)
+  end
+
+  def prev_search
+    nav_search(-1)
+  end
+
+  def next_search
+    nav_search(1)
+  end
+
+  def last_search
+    select_search(@history.size - 1)
   end
 
   def add(level_set)
+    return if level_set.nil?
     @history << level_set
-    select(@history.size - 1)
+    select_search(@history.size - 1)
   end
+
+  # TODO: Implement delete method (for when searches expire, or somehow
+  # keep them but reexecute them if needed (they're not cached anymore, so
+  # this could be problematic, think about it).
 
   def level_set
     @history[@pos]
@@ -1245,11 +1381,10 @@ class Tab
 
   # Note that we do NOT destroy the underlying LevelSets, they remained cached for later
   def destroy
-    i = @index
     @@tabs.delete(@index)
-    @@notebook.forget(self.class.active_id)
+    @@notebook.forget(get_id)
     self.class.update_tree
-    Log.trace("Closed tab #{i}")
+    Log.trace("Closed tab #{@index}")
   rescue => e
     log_exception("Failed to close tab", e)
   end
