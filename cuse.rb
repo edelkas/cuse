@@ -43,6 +43,7 @@ TIMEOUT_OUTTE = 5    # Time to wait for outte (not local, so long)
 CACHE_SIZE    = 1024        # Number of cache slots
 CACHE_TIMEOUT = 2 * 60 * 60 # Cache expire duration
 
+CONFIG_FILENAME = "cuse.ini"
 BACKGROUND_LOOP = 5 # Check background tasks every 5 mins
 
 # < ------------------------- Backend variables ------------------------------ >
@@ -424,71 +425,93 @@ end
 
 # < ----------------------- File and flag management ------------------------- >
 
-def load_config(name = nil)
-  # TODO: Actually load from config file here if it exists
-  return if !name.nil?
-  # If no config name is provided, load defaults
-  $config = {
-    filters_empty: { 
-      'Title'      => '',
-      'Author'     => '',
-      'Author ID'  => '',
-      'Mode'       => 'Solo',
-      'Tab'        => 'Best',
-      'After'      => '',
-      'Before'     => '',
-      'Min ID'     => '',
-      'Max ID'     => '',
-      '0th by'     => '',
-      '0th not by' => '',
-      'Scores'     => ''
-    },
-    filters_default: {
-      'Title'      => 'Untitled',
-      'Author'     => 'Melancholy',
-      'Author ID'  => '117031',
-      'Mode'       => 'Solo',
-      'Tab'        => 'Featured',
-      'After'      => format_date(INITIAL_DATE),
-      'Before'     => format_date(Time.now),
-      'Min ID'     => '22715',
-      'Max ID'     => '110000',
-      '0th by'     => 'Slomac',
-      '0th not by' => 'Slomac',
-      'Scores'     => '20'
-    },
-    states_empty: {
-      'Title'      => false,
-      'Author'     => false,
-      'Author ID'  => false,
-      'Mode'       => false,
-      'Tab'        => false,
-      'After'      => false,
-      'Before'     => false,
-      'Min ID'     => false,
-      'Max ID'     => false,
-      '0th by'     => false,
-      '0th not by' => false,
-      'Scores'     => false
-    },
-    states_default: {
-      'Title'      => true,
-      'Author'     => false,
-      'Author ID'  => false,
-      'Mode'       => false,
-      'Tab'        => false,
-      'After'      => false,
-      'Before'     => false,
-      'Min ID'     => false,
-      'Max ID'     => false,
-      '0th by'     => false,
-      '0th not by' => false,
-      'Scores'     => false
-    }
-  }  
+def default_config
+  {
+    'searches' => [
+      {
+        'name' => 'Empty',
+        'filters' => {
+          'Title'      => '',
+          'Author'     => '',
+          'Author ID'  => '',
+          'Mode'       => 'Solo',
+          'Tab'        => 'Best',
+          'After'      => '',
+          'Before'     => '',
+          'Min ID'     => '',
+          'Max ID'     => '',
+          '0th by'     => '',
+          '0th not by' => '',
+          'Scores'     => ''
+        },
+        'states' => {
+          'Title'      => false,
+          'Author'     => false,
+          'Author ID'  => false,
+          'Mode'       => false,
+          'Tab'        => false,
+          'After'      => false,
+          'Before'     => false,
+          'Min ID'     => false,
+          'Max ID'     => false,
+          '0th by'     => false,
+          '0th not by' => false,
+          'Scores'     => false
+        }
+      },
+      {
+        'name' => 'Sample search',
+        'filters' => {
+          'Title'      => 'Untitled',
+          'Author'     => 'Melancholy',
+          'Author ID'  => '117031',
+          'Mode'       => 'Solo',
+          'Tab'        => 'Featured',
+          'After'      => format_date(INITIAL_DATE),
+          'Before'     => format_date(Time.now),
+          'Min ID'     => '22715',
+          'Max ID'     => '110000',
+          '0th by'     => 'Slomac',
+          '0th not by' => 'Slomac',
+          'Scores'     => '20'
+        },
+        'states' => {
+          'Title'      => true,
+          'Author'     => false,
+          'Author ID'  => false,
+          'Mode'       => false,
+          'Tab'        => false,
+          'After'      => false,
+          'Before'     => false,
+          'Min ID'     => false,
+          'Max ID'     => false,
+          '0th by'     => false,
+          '0th not by' => false,
+          'Scores'     => false
+        }
+      }
+    ]
+  }
 end
 
-def save_config(name)
+def load_config
+  if File.file?(CONFIG_FILENAME)
+    $config = JSON.parse(File.read(CONFIG_FILENAME))
+    Log.info("Loaded config file")
+  else
+    $config = default_config
+    Log.info("No config file found, loaded defaults")
+  end
+rescue
+  $config = default_config
+  Log.warn("Error loading config file, loaded defaults")
+end
+
+def save_config
+  File.write(CONFIG_FILENAME, JSON.pretty_generate($config))
+  Log.debug("Saved config file")
+rescue
+  Log.warn("Failed to save config file")
 end
 
 def log_flags(type)
@@ -524,7 +547,9 @@ end
 #  4. Search:      Search profiles, holding all search terms and filters
 #  5. Filter:      A single filter, including the checkbox, text entry, etc
 #  6. LevelSet:    Search result, holding userlevels, and drawing the table
-#  7. Log:         Logging class, responsible for drawing the logbox
+#  7. Cache:       Stores search results, and manages expiration, etc
+#  8. Tab:         Keeps track of the search history and drawing each tab
+#  9. Log:         Logging class, responsible for drawing the logbox
 
 class Tooltip
   def initialize(widget, text = " ? ")
@@ -608,15 +633,15 @@ class Search
   def self.init
     @@searches['Sample search'] = Search.new(
       'Sample search',
-      $config[:filters_default].dup,
-      $config[:states_default].dup,
+      $config['searches'].find{ |s| s['name'] == 'Sample search' }['filters'].dup,
+      $config['searches'].find{ |s| s['name'] == 'Sample search' }['states'].dup,
       false, 
       false
     )
     @@searches['Empty'] = Search.new(
       'Empty',
-      $config[:filters_empty].dup,
-      $config[:states_empty].dup,
+      $config['searches'].find{ |s| s['name'] == 'Empty' }['filters'].dup,
+      $config['searches'].find{ |s| s['name'] == 'Empty' }['states'].dup,
       true,
       false
     )
@@ -638,6 +663,12 @@ class Search
 
   # Parse config file for saved searches
   def self.populate
+    $config['searches'].each{ |search|
+      next if ['Sample search', 'Empty'].include?(search['name'])
+      @@searches[search['name']] = Search.new(search['name'], search['filters'].dup, search['states'].dup)
+    }
+  rescue
+    Log.warn("Couldn't load saved searches, loaded defaults")
   end
 
   def self.find(name)
@@ -671,8 +702,16 @@ class Search
   def self.save
     name = find_name(@@entry.value)
     Filter.validate
-    @@searches[name] = Search.new(name, Filter.filters, Filter.states, false, true)
+    f = Filter.filters
+    s = Filter.states
+    @@searches[name] = Search.new(name, f, s)
     update_list
+    $config['searches'] << {
+      'name' => name,
+      'filters' => f,
+      'states' => s
+    }
+    save_config
   end
 
   def self.delete
@@ -680,7 +719,7 @@ class Search
     return if selection.nil?
     name = @@list.get(selection)
     return if !@@searches.key?(name)
-    @@searches[@@list.get(selection)].delete
+    @@searches[name].delete
   end
 
   def self.clear
@@ -731,17 +770,12 @@ class Search
     @@searches[@name] = self
   end
 
-  # TODO: Add confirmation dialog
   def delete
     return if !@deletable
+    return if confirm('Delete search', 'Are you sure?') == 'no'
     @@searches.delete(@name)
     self.class.update_list
-  end
-
-  # Create copy of search (same filters and states)
-  def dup(name, hidden = false, deletable = true)
-    return if @@searches.key?(name)
-    @@searches[name] = Search.new(name, @filters.dup, @states.dup, hidden, deletable)
+    save_config
   end
 end # End Search
 
@@ -1483,19 +1517,23 @@ def init
 end
 
 def destroy
+  save_config
   server_shutdown
   $root.destroy
 end
 
-def destroy_callback
-  kill = Tk::messageBox(
+def confirm(title, msg)
+  Tk::messageBox(
     type:    'yesno', 
-    title:   'Quit', 
-    message: 'Really quit?', 
+    title:   title,
+    message: msg,
     icon:    'question', 
     default: 'no'
   )
-  kill == 'yes' ? destroy : nil
+end
+
+def destroy_callback
+  confirm('Quit', 'Really quit?') == 'yes' ? destroy : nil
 end
 
 # Switch focus to root if we click outside of a widget
