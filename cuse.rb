@@ -543,13 +543,14 @@ end
 #   1. Tooltip:    Custom info frame when hovering over widgets
 #   2. Button:     Button with an icon and a tooltip
 #   3. Scrollable: Generic container to add scrollbars to children widgets
+#   4. Pager:      Widget with 4 buttons and a label, for page navigation
 # Specific widgets:
-#  4. Search:      Search profiles, holding all search terms and filters
-#  5. Filter:      A single filter, including the checkbox, text entry, etc
-#  6. LevelSet:    Search result, holding userlevels, and drawing the table
-#  7. Cache:       Stores search results, and manages expiration, etc
-#  8. Tab:         Keeps track of the search history and drawing each tab
-#  9. Log:         Logging class, responsible for drawing the logbox
+#   5. Search:      Search profiles, holding all search terms and filters
+#   6. Filter:      A single filter, including the checkbox, text entry, etc
+#   7. LevelSet:    Search result, holding userlevels, and drawing the table
+#   8. Cache:       Stores search results, and manages expiration, etc
+#   9. Tab:         Keeps track of the search history and drawing each tab
+#  10. Log:         Logging class, responsible for drawing the logbox
 
 class Tooltip
   def initialize(widget, text = " ? ")
@@ -619,6 +620,36 @@ class Scrollable
     end
   end
 end # End Scrollable
+
+class Pager
+
+  def initialize(frame, name, type, page, pages, callback_first, callback_prev, callback_next, callback_last)
+    type = 'a' if !['a', 'b'].include?(type)
+    @name = name
+    @type = type
+    @page = page.clamp(0, pages)
+    @pages = pages
+    @frame = TkFrame.new(frame)
+    Button.new(@frame, "icons/first_#{type}.gif", 0, 0, "First #{name.downcase}", callback_first)
+    Button.new(@frame, "icons/prev_#{type}.gif", 0, 1, "Previous #{name.downcase}", callback_prev)
+    @label = TkLabel.new(@frame).grid(row: 0, column: 2)
+    Button.new(@frame, "icons/next_#{type}.gif", 0, 3, "Next #{name.downcase}", callback_next)
+    Button.new(@frame, "icons/last_#{type}.gif", 0, 4, "Last #{name.downcase}", callback_last)
+    update
+  end
+
+  def update(page = @page, pages = @pages)
+    @page = page.clamp(0, pages)
+    @pages = pages
+    @label.text = "#{@name} #{@page} / #{@pages}"
+  end
+
+  def grid(row, col, sticky)
+    @frame.grid(row: row, column: col, sticky: sticky)
+    self
+  end
+
+end # End Pager
 
 class Search
   attr_accessor :name, :filters, :states, :hidden
@@ -697,6 +728,8 @@ class Search
     name = @@list.get(selection)
     return if name.nil?
     _load(name)
+  rescue => e
+    log_exception("Failed to load search", e)
   end
 
   def self.save
@@ -712,6 +745,8 @@ class Search
       'states' => s
     }
     save_config
+  rescue => e
+    log_exception("Failed to save search", e)
   end
 
   def self.delete
@@ -759,6 +794,8 @@ class Search
       level_set = slot
     end
     Tab.add(level_set)
+  rescue => e
+    Log.err("Failed to execute search", e)
   end
 
   def initialize(name, filters, states, hidden = false, deletable = true)
@@ -775,7 +812,10 @@ class Search
     return if confirm('Delete search', 'Are you sure?') == 'no'
     @@searches.delete(@name)
     self.class.update_list
+    $config['searches'].delete_if{ |s| s['name'] == @name }
     save_config
+  rescue => e
+    log_exception("Failed to delete search", e)
   end
 end # End Search
 
@@ -990,7 +1030,7 @@ class Filter
 end # End Filter
 
 class LevelSet
-  attr_reader :levels
+  attr_reader :levels, :key
 
   def initialize(key, raw)
     @key = key
@@ -1187,15 +1227,29 @@ class Tab
     @@notebook.add(TkFrame.new, text: @@special_tabs[:close])
     @@notebook.bind("<NotebookTabChanged>"){ update }
     @@frame2 = TkFrame.new(@@frame).grid(row: 1, column: 0, sticky: 'ew')
-    # TODO: The following is missing labels and text entries
-    Button.new(@@frame2, 'icons/first_b.gif',    0, 0, 'First search',    -> { Tab.first_search })
-    Button.new(@@frame2, 'icons/previous_b.gif', 0, 1, 'Previous search', -> { Tab.prev_search })
-    Button.new(@@frame2, 'icons/next_b.gif',     0, 2, 'Next search',     -> { Tab.next_search })
-    Button.new(@@frame2, 'icons/last_b.gif',     0, 3, 'Last search',     -> { Tab.last_search })
-    Button.new(@@frame2, 'icons/first.gif',      0, 4, 'First page',      -> { })
-    Button.new(@@frame2, 'icons/previous.gif',   0, 5, 'Previous page',   -> { })
-    Button.new(@@frame2, 'icons/next.gif',       0, 6, 'Next page',       -> { })
-    Button.new(@@frame2, 'icons/last.gif',       0, 7, 'Last page',       -> { })
+    @@frame2.grid_columnconfigure(0, weight: 1)
+    @@pager_search = Pager.new(
+      @@frame2,
+      'Search',
+      'b',
+      0,
+      0,
+      -> { Tab.first_search },
+      -> { Tab.prev_search },
+      -> { Tab.next_search },
+      -> { Tab.last_search }
+    ).grid(0, 0, 'w')
+    @@pager_pages = Pager.new(
+      @@frame2,
+      'Page',
+      'a',
+      0,
+      0,
+      -> {},
+      -> {},
+      -> {},
+      -> {}
+    ).grid(0, 1, 'e')
     @@tree = TkTreeview.new(
       @@frame,
       selectmode: 'browse',
@@ -1375,6 +1429,7 @@ class Tab
     return nil if !index.between?(0, @history.size - 1)
     @pos = index
     self.class.update_tree
+    @@pager_search.update(index + 1, @history.size)
   rescue
     nil
   end
@@ -1400,7 +1455,7 @@ class Tab
   end
 
   def add(level_set)
-    return if level_set.nil?
+    return if level_set.nil? || @history.size > 0 && level_set.key == @history.last.key
     @history << level_set
     select_search(@history.size - 1)
   end
