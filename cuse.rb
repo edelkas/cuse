@@ -1266,8 +1266,6 @@ class Tab
     @@label = TkText.new(@@frame, font: "TkDefaultFont 8", wrap: 'char', state: 'disabled', height: 1, background: COLOR_LABEL)
                     .grid(row: 3, column: 0, sticky: 'ew')
     @@label.tag_configure('bold', font: "TkDefaultFont 8 bold")
-    @@label.grid_remove
-    @@label.grid
   end
 
   # Called whenever the active tab changes.
@@ -1321,6 +1319,22 @@ class Tab
     @@label.height = @@label.count('1.0', 'end', 'displaylines').clamp(1, 2)
   rescue => e
     log_exception("", e)
+  end
+
+  # Update labels of pagers
+  def self.update_pagers
+    if @@active.nil?
+      @@pager_search.update(0, 0)
+    else
+      @@active.update_pagers
+    end
+  end
+
+  # Update all widgets
+  def self.update_widgets
+    update_tree
+    update_label
+    update_pagers
   end
 
   def self.active_id
@@ -1397,8 +1411,7 @@ class Tab
 
   def self.empty
     @@active = nil
-    update_tree
-    update_label
+    update_widgets
   end
 
   def initialize(index, name)
@@ -1423,11 +1436,14 @@ class Tab
     return nil if id == -1
     @@notebook.select(id)
     @@active = self
-    self.class.update_tree
-    self.class.update_label
+    self.class.update_widgets
     self
   rescue
     nil
+  end
+
+  def update_pagers
+    @@pager_search.update(@pos + 1, @history.size)
   end
 
   # Navigate from one tab to another based on an ID offset
@@ -1454,16 +1470,15 @@ class Tab
   end
 
   def select_search(index)
-    return nil if !index.between?(0, @history.size - 1)
+    return nil if @history.empty? || !index.between?(0, @history.size - 1)
     @pos = index
-    self.class.update_tree
-    self.class.update_label
-    @@pager_search.update(index + 1, @history.size)
+    self.class.update_widgets
   rescue
     nil
   end
 
   def nav_search(offset = 0)
+    return if @history.empty?
     select_search((@pos + offset).clamp(0, @history.size - 1))
   end
 
@@ -1501,7 +1516,6 @@ class Tab
   def destroy
     @@tabs.delete(@index)
     @@notebook.forget(get_id)
-    self.class.update_tree
     Log.trace("Closed tab #{@index}")
   rescue => e
     log_exception("Failed to close tab", e)
