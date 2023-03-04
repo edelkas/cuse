@@ -71,6 +71,8 @@ TIME_FORMAT_LOG  = "%H:%M:%S.%L"        # Time format for the log box
 COLOR_LOG_NORMAL  = "#000"
 COLOR_LOG_WARNING = "#F70"
 COLOR_LOG_ERROR   = "#F00"
+COLOR_TREE        = "#FDD"
+COLOR_LABEL       = "#DDF"
 
 # < ------------------------- Frontend variables ----------------------------- >
 
@@ -1261,6 +1263,11 @@ class Tab
       @@tree.column_configure(name, anchor: attr[:anchor], minwidth: name.length * @@minwidth, width: attr[:width] * @@charwidth)
       @@tree.heading_configure(name, text: name.capitalize)
     }
+    @@label = TkText.new(@@frame, font: "TkDefaultFont 8", wrap: 'char', state: 'disabled', height: 1, background: COLOR_LABEL)
+                    .grid(row: 3, column: 0, sticky: 'ew')
+    @@label.tag_configure('bold', font: "TkDefaultFont 8 bold")
+    @@label.grid_remove
+    @@label.grid
   end
 
   # Called whenever the active tab changes.
@@ -1276,14 +1283,11 @@ class Tab
     when @@special_tabs[:close]
       close
     else
-      @@active = active
-      update_tree
+      active.select
     end
   end
 
   # Update userlevel info table
-  # Parameter is the index of the LevelSet in the selected tab's history
-  # If nil, last search will be picked.
   def self.update_tree
     @@tree.children('').each(&:delete)
     return if @@active.nil?
@@ -1295,6 +1299,28 @@ class Tab
     $root.update # Update app display
   rescue => e
     log_exception("Failed to update userlevel list", e)
+  end
+
+  # Update search description text
+  def self.update_label
+    @@label.configure(state: 'normal')
+    @@label.delete('1.0', 'end')
+    @@label.configure(state: 'disabled')
+    if @@active.nil? || @@active.level_set.nil?
+      @@label.grid_remove rescue nil
+      return
+    end
+    @@label.configure(state: 'normal')
+    JSON.parse(@@active.level_set.key).map{ |name, value|
+      @@label.insert('end', name, 'bold')
+      @@label.insert('end', ": #{value}; ")
+    }
+    @@label.configure(state: 'disabled')
+    @@label.grid
+    $root.update # Update text widget so that display line count is accurate
+    @@label.height = @@label.count('1.0', 'end', 'displaylines').clamp(1, 2)
+  rescue => e
+    log_exception("", e)
   end
 
   def self.active_id
@@ -1372,6 +1398,7 @@ class Tab
   def self.empty
     @@active = nil
     update_tree
+    update_label
   end
 
   def initialize(index, name)
@@ -1397,6 +1424,7 @@ class Tab
     @@notebook.select(id)
     @@active = self
     self.class.update_tree
+    self.class.update_label
     self
   rescue
     nil
@@ -1429,6 +1457,7 @@ class Tab
     return nil if !index.between?(0, @history.size - 1)
     @pos = index
     self.class.update_tree
+    self.class.update_label
     @@pager_search.update(index + 1, @history.size)
   rescue
     nil
@@ -1567,7 +1596,7 @@ end # End Log
 def init
   load_config
   Search.init
-  Tk::Tile::Style.configure('Treeview', rowheight: 12, font: 'Courier 9', background: "#FDD", fieldbackground: "#FDD")
+  Tk::Tile::Style.configure('Treeview', rowheight: 12, font: 'Courier 9', background: COLOR_TREE, fieldbackground: COLOR_TREE)
   Tk::Tile::Style.configure('Heading', font: 'TkDefaultFont 10')
 end
 
