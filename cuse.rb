@@ -49,7 +49,7 @@ BACKGROUND_LOOP = 5 # Check background tasks every 5 mins
 # < ------------------------- Backend variables ------------------------------ >
 
 $port_npp  = 8124 # Default port used to comunicate with the game
-$proxy     = "http://localhost:#{$port_npp}".ljust(TARGET.length, "\x00") #!
+$proxy     = "127.0.0.1:#{$port_npp}".ljust(TARGET.length, "\x00") #!
 $last_req  = ""   # Last request string input by user
 $socket    = nil  # Permanent socket with the game
 $res       = nil  # Store outte's response, to forward to the game
@@ -115,6 +115,7 @@ def _unpack(bytes, fmt = nil)
   i = bytes.unpack(fmt)[0] if !fmt.nil?
   i ||= bytes.unpack('H*')[0].scan(/../).reverse.join.to_i(16)
 rescue
+  if bytes.is_a?(Array) then bytes = bytes.join end
   bytes.unpack('H*')[0].scan(/../).reverse.join.to_i(16)
 end
 
@@ -258,6 +259,7 @@ end
 def forward(req)
   # Build proxied request
   method, path, protocol = req.split("\r\n")[0].split
+  path = path.sub(/\/[^\/]+/, '') unless path[1..4] == 'prod'
   uri = URI.parse(TARGET + path)
   case method.upcase
   when 'GET'
@@ -333,10 +335,10 @@ def validate_res(res, pars)
   end
 
   # Type needs to be 0 (level)
-  $flags[:res][:invalid_length] = true if _unpack(res[24...28]) != 0
+  $flags[:res][:invalid_type] = true if _unpack(res[24...28]) != 0
 
   # Mode (solo, coop, race) needs to match the game's
-  $flags[:res][:invalid_length] = true if _unpack(res[32...36]) != pars['mode'].to_i
+  $flags[:res][:invalid_mode] = true if _unpack(res[32...36]) != pars['mode'].to_i
 
   if $flags[:res].values.count(true) > 0
     log_flags(:res)
@@ -414,6 +416,7 @@ def server_call(req = $last_req)
       Log.err('Connection to outte timed out')
     else
       Log.debug("Received #{res.size} bytes from outte (#{time(t)})")
+      $res = res.dup
     end
     return res
   end
@@ -1685,6 +1688,8 @@ Button.new(fButtons, 'icons/delete.gif', 0, 2, 'Delete', ->{ Search.delete })
 Button.new(fButtons, 'icons/search.gif', 0, 3, 'Search', ->{ Search.execute })
 Button.new(fButtons, 'icons/npp.gif',    0, 4, 'Play',   ->{ })
 Search.draw(fSearch, 2, 0)
+
+TkCanvas.new(fSearch, width: 176, height: 100, background: 'white').grid(row: 3, column: 0)
 
 # Level view
 Tab.init(fLevels, 0, 0)
