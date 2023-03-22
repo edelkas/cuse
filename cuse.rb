@@ -270,8 +270,8 @@ def forward(req)
     raise "Unknown HTTP method requested by N++"
   end
   reqNew = clear_headers(reqNew)
-  req.split("\r\n\r\n")[0].split("\r\n")[1..-1].map{ |h| h.split(": ") }.each{ |h|
-    reqNew[h[0]] = h[1]
+  req.split("\r\n\r\n")[0].split("\r\n")[1..-1].map{ |h| h.split(':') }.each{ |h|
+    reqNew[h[0]] = h[1].strip
   }
   reqNew['host'] = TARGET[8..-1]
   reqNew.body = req.split("\r\n\r\n")[1..-1].join("\r\n\r\n")
